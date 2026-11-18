@@ -1,0 +1,121 @@
+import bcrypt from 'bcryptjs';
+import { User, ROLES } from '../models/User.js';
+import { isImageKitUrl } from '../config/imagekit.js';
+import { Warehouse } from '../models/Warehouse.js';
+import { asyncHandler, fail, isObjectId, ok } from '../utils/http.js';
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export const listUsers = asyncHandler(async (req, res) => {
+  const query = {};
+  if (req.query.role && ROLES.includes(req.query.role)) query.role = req.query.role;
+  if (req.query.q) {
+    const pattern = new RegExp(escapeRegex(req.query.q), 'i');
+    query.$or = [{ name: pattern }, { email: pattern }, { phone: pattern }];
+  }
+  const users = await User.find(query)
+    .select('-password')
+    .populate('assignedWarehouses', 'name location')
+    .sort({ createdAt: -1 });
+  return ok(res, users);
+});
+
+export const listSuppliers = asyncHandler(async (_req, res) => {
+  const suppliers = await User.find({ role: 'supplier' }).select('name email image').sort({ name: 1 });
+  return ok(res, suppliers);
+});
+
+export const getUser = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin' && String(req.user._id) !== req.params.id) {
+    return fail(res, 403, 'You can only view your own profile');
+  }
+  const user = await User.findById(req.params.id)
+    .select('-password')
+    .populate('assignedWarehouses', 'name location');
+  if (!user) return fail(res, 404, 'User not found');
+  return ok(res, user);
+});
+
+export const updateUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return fail(res, 404, 'User not found');
+
+  const { name, email, phone, role, assignedWarehouses, password, image, imageFileId } = req.body;
+
+  if (name !== undefined) user.name = String(name).trim();
+  if (phone !== undefined) user.phone = String(phone);
+  if (email !== undefined) {
+    const normalized = String(email).trim().toLowerCase();
+    const duplicate = await User.findOne({ email: normalized, _id: { $ne: user._id } });
+    if (duplicate) return fail(res, 409, 'Email is already in use');
+    user.email = normalized;
+  }
+  if (role !== undefined) {
+    if (!ROLES.includes(role)) return fail(res, 400, 'Invalid role');
+    user.role = role;
+  }
+  if (assignedWarehouses !== undefined) {
+    if (!Array.isArray(assignedWarehouses) || assignedWarehouses.some((id) => !isObjectId(id))) {
+      return fail(res, 400, 'assignedWarehouses must be an array of warehouse ids');
+    }
+    const count = await Warehouse.countDocuments({ _id: { $in: assignedWarehouses } });
+    if (count !== assignedWarehouses.length) return fail(res, 400, 'One or more warehouses do not exist');
+    user.assignedWarehouses = assignedWarehouses;
+  }
+  const imageChanged = image !== undefined && String(image) !== user.image;
+  const fileIdChanged = imageFileId !== undefined && String(imageFileId) !== user.imageFileId;
+  if (imageChanged || fileIdChanged) {
+    const nextImage = String(image ?? user.image);
+    const nextFileId = String(imageFileId ?? user.imageFileId);
+    if ((nextImage || nextFileId) && (!nextImage || !nextFileId || !isImageKitUrl(nextImage))) {
+      return fail(res, 400, 'Profile images must be uploaded through ImageKit');
+    }
+    user.image = nextImage;
+    user.imageFileId = nextFileId;
+  }
+  if (password !== undefined) {
+    if (String(password).length < 6) return fail(res, 400, 'Password must be at least 6 characters');
+    user.password = await bcrypt.hash(String(password), 10);
+  }
+
+  await user.save();
+  const populated = await User.findById(user._id)
+    .select('-password')
+    .populate('assignedWarehouses', 'name location');
+  return ok(res, populated, 'User updated');
+});
+
+export const updateMe = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  const { name, email, phone, image, imageFileId } = req.body;
+
+  if (name !== undefined) user.name = String(name).trim();
+  if (phone !== undefined) user.phone = String(phone);
+  if (email !== undefined) {
+    const normalized = String(email).trim().toLowerCase();
+    const duplicate = await User.findOne({ email: normalized, _id: { $ne: user._id } });
+    if (duplicate) return fail(res, 409, 'Email is already in use');
+    user.email = normalized;
+  }
+  const imageChanged = image !== undefined && String(image) !== user.image;
+  const fileIdChanged = imageFileId !== undefined && String(imageFileId) !== user.imageFileId;
+  if (imageChanged || fileIdChanged) {
+    const nextImage = String(image ?? user.image);
+    const nextFileId = String(imageFileId ?? user.imageFileId);
+    if ((nextImage || nextFileId) && (!nextImage || !nextFileId || !isImageKitUrl(nextImage))) {
+      return fail(res, 400, 'Profile images must be uploaded through ImageKit');
+    }
+    user.image = nextImage;
+    user.imageFileId = nextFileId;
+  }
+  await user.save();
+  const updated = await User.findById(user._id).select('-password').populate('assignedWarehouses', 'name location');
+  return ok(res, updated, 'Profile updated');
+});
+
+export const deleteUser = asyncHandler(async (req, res) => {
+  if (String(req.user._id) === req.params.id) return fail(res, 400, 'You cannot delete your own account');
+  const user = await User.findByIdAndDelete(req.params.id);
+  if (!user) return fail(res, 404, 'User not found');
+  return ok(res, { id: user._id }, 'User deleted');
+});
