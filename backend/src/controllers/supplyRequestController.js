@@ -5,6 +5,9 @@ import { assignedWarehouseIds } from '../middleware/auth.js';
 import { addStockWithCapacity } from '../utils/capacity.js';
 import { withTransaction } from '../utils/transaction.js';
 import { asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt } from '../utils/http.js';
+import { listOptions, setPaginationHeaders } from '../utils/list.js';
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const populateRequest = (query) =>
   query
@@ -50,7 +53,27 @@ export const listRequests = asyncHandler(async (req, res) => {
     return fail(res, 403, 'Sales representatives cannot view supply requests');
   }
   if (['Pending', 'Approved', 'Rejected'].includes(req.query.status)) query.status = req.query.status;
-  const requests = await populateRequest(SupplyRequest.find(query)).sort({ createdAt: -1 });
+  if (req.query.productId && isObjectId(req.query.productId)) query.product = req.query.productId;
+  if (req.user.role === 'admin') {
+    if (req.query.warehouseId && isObjectId(req.query.warehouseId)) query.warehouse = req.query.warehouseId;
+    if (req.query.supplierId && isObjectId(req.query.supplierId)) query.supplier = req.query.supplierId;
+  }
+  if (req.query.q) {
+    const pattern = new RegExp(escapeRegex(req.query.q), 'i');
+    const products = await Product.find({ name: pattern }).select('_id');
+    query.$or = [{ note: pattern }, { reviewNote: pattern }, { product: { $in: products.map((item) => item._id) } }];
+  }
+
+  const opts = listOptions(req, {
+    sortFields: { createdAt: 'createdAt', updatedAt: 'updatedAt', status: 'status', quantity: 'quantity' },
+    defaultSort: { createdAt: -1 },
+  });
+  const total = await SupplyRequest.countDocuments(query);
+  const requests = await populateRequest(SupplyRequest.find(query))
+    .sort(opts.sort)
+    .skip(opts.skip)
+    .limit(opts.limit);
+  setPaginationHeaders(res, opts.page, opts.limit, total);
   return ok(res, requests);
 });
 

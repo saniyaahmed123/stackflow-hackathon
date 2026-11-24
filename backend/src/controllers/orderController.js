@@ -10,6 +10,7 @@ import { withTransaction } from '../utils/transaction.js';
 import {
   asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt, stockShortfallMessage,
 } from '../utils/http.js';
+import { listOptions, setPaginationHeaders } from '../utils/list.js';
 
 const populateOrder = (query) =>
   query
@@ -46,6 +47,10 @@ export const createOrder = asyncHandler(async (req, res) => {
   if (products.length !== ids.length) {
     const missing = ids.filter((id) => !productMap.has(id));
     return fail(res, 400, `Product not found: ${missing.join(', ')}.`);
+  }
+  const archived = products.filter((product) => product.archived).map((product) => product.name);
+  if (archived.length) {
+    return fail(res, 400, `Archived products cannot be ordered: ${archived.join(', ')}.`);
   }
 
   const stocks = await Stock.find({ warehouse: warehouse._id, product: { $in: ids } }).lean();
@@ -84,6 +89,102 @@ export const createOrder = asyncHandler(async (req, res) => {
   return ok(res, await populateOrder(Order.findById(order._id)), 'Order created (Pending)', 201);
 });
 
+export const precheckOrder = asyncHandler(async (req, res) => {
+  const warehouseId = req.body.warehouseId || req.body.warehouse;
+  if (!warehouseId) return fail(res, 400, 'Warehouse is required.');
+  if (!isObjectId(warehouseId)) return fail(res, 400, 'Warehouse must be a valid warehouse id.');
+  if (!Array.isArray(req.body.items) || req.body.items.length === 0) {
+    return fail(res, 400, 'At least one product is required.');
+  }
+
+  const quantities = new Map();
+  for (const item of req.body.items) {
+    const quantity = positiveInt(item.quantity);
+    if (!quantity) return fail(res, 400, INVALID_QUANTITY);
+    const productId = item.productId || item.product;
+    if (!isObjectId(productId)) return fail(res, 400, 'Product is required and must be a valid product id.');
+    quantities.set(String(productId), (quantities.get(String(productId)) || 0) + quantity);
+  }
+
+  const warehouse = await Warehouse.findById(warehouseId).lean();
+  if (!warehouse) return fail(res, 404, `Warehouse "${warehouseId}" does not exist.`);
+
+  const ids = [...quantities.keys()];
+  const products = await Product.find({ _id: { $in: ids } }).lean();
+  const productMap = new Map(products.map((product) => [String(product._id), product]));
+  const chosenStocks = await Stock.find({ warehouse: warehouse._id, product: { $in: ids } }).lean();
+  const chosenMap = new Map(chosenStocks.map((stock) => [String(stock.product), stock.quantity || 0]));
+  const allStocks = await Stock.find({ product: { $in: ids } }).populate('warehouse', 'name').lean();
+  const stockByProduct = new Map();
+  for (const stock of allStocks) {
+    const key = String(stock.product);
+    if (!stockByProduct.has(key)) stockByProduct.set(key, []);
+    stockByProduct.get(key).push(stock);
+  }
+
+  let totalAmount = 0;
+  const items = [];
+  for (const [id, requested] of quantities) {
+    const product = productMap.get(id);
+    const archived = Boolean(product?.archived);
+    const onHand = chosenMap.get(id) || 0;
+    const available = product && !archived ? onHand : 0;
+    const canFulfill = Boolean(product && !archived && available >= requested);
+    const shortfall = canFulfill ? 0 : Math.max(requested - available, 0);
+    const alternatives = [];
+    let reason = null;
+
+    if (!product) {
+      reason = 'Product not found';
+    } else if (archived) {
+      reason = 'Product is archived';
+      alternatives.push({ type: 'archived', message: 'Archived products cannot be ordered.' });
+    } else if (!canFulfill) {
+      reason = 'Insufficient stock';
+      const other = (stockByProduct.get(id) || [])
+        .filter((stock) => String(stock.warehouse?._id || stock.warehouse) !== String(warehouse._id))
+        .filter((stock) => (stock.quantity || 0) >= requested)
+        .sort((left, right) => (right.quantity || 0) - (left.quantity || 0))[0];
+      if (other) {
+        alternatives.push({
+          type: 'warehouse',
+          warehouseId: String(other.warehouse?._id || other.warehouse),
+          warehouseName: other.warehouse?.name || '',
+          available: other.quantity || 0,
+        });
+      } else {
+        alternatives.push({
+          type: 'maxQuantity',
+          warehouseId: String(warehouse._id),
+          warehouseName: warehouse.name,
+          maxQuantity: available,
+        });
+      }
+    }
+
+    if (canFulfill) totalAmount += Number(product.price) * requested;
+    items.push({
+      productId: id,
+      productName: product?.name || null,
+      sku: product?.sku || null,
+      archived,
+      requested,
+      available,
+      shortfall,
+      canFulfill,
+      reason,
+      alternatives,
+    });
+  }
+
+  return ok(res, {
+    warehouse: { id: String(warehouse._id), name: warehouse.name },
+    items,
+    totalAmount: Math.round(totalAmount * 100) / 100,
+    allFulfillable: items.every((item) => item.canFulfill),
+  });
+});
+
 export const listOrders = asyncHandler(async (req, res) => {
   const query = {};
   if (req.user.role === 'salesRepresentative') query.createdBy = req.user._id;
@@ -99,7 +200,26 @@ export const listOrders = asyncHandler(async (req, res) => {
     const pattern = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     query.$or = [{ orderNumber: pattern }, { customerName: pattern }, { customerPhone: pattern }];
   }
-  const orders = await populateOrder(Order.find(query)).sort({ createdAt: -1 });
+  if (req.query.productId && isObjectId(req.query.productId)) {
+    query['products.product'] = req.query.productId;
+  }
+
+  const opts = listOptions(req, {
+    sortFields: {
+      createdAt: 'createdAt',
+      orderNumber: 'orderNumber',
+      customerName: 'customerName',
+      status: 'status',
+      totalAmount: 'totalAmount',
+    },
+    defaultSort: { createdAt: -1 },
+  });
+  const total = await Order.countDocuments(query);
+  const orders = await populateOrder(Order.find(query))
+    .sort(opts.sort)
+    .skip(opts.skip)
+    .limit(opts.limit);
+  setPaginationHeaders(res, opts.page, opts.limit, total);
   return ok(res, orders);
 });
 

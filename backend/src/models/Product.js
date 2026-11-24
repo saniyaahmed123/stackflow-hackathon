@@ -8,6 +8,7 @@ const productSchema = new Schema(
     category: { type: String, default: 'General', trim: true },
     price: { type: Number, required: true, min: 0 },
     lowStockLimit: { type: Number, default: 5, min: 0 },
+    archived: { type: Boolean, default: false },
     imageUrl: { type: String, default: '' },
     imageFileId: { type: String, default: '' },
     supplier: { type: Schema.Types.ObjectId, ref: 'User', default: null },

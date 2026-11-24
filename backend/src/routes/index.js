@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { adminOnly, authorize, protect } from '../middleware/auth.js';
+import { loginRateLimit, registerRateLimit } from '../middleware/rateLimit.js';
 
 import * as auth from '../controllers/authController.js';
 import * as users from '../controllers/userController.js';
@@ -13,8 +14,8 @@ import * as supplyRequests from '../controllers/supplyRequestController.js';
 
 const router = Router();
 
-router.post('/auth/register', auth.register);
-router.post('/auth/login', auth.login);
+router.post('/auth/register', registerRateLimit, auth.register);
+router.post('/auth/login', loginRateLimit, auth.login);
 
 router.use(protect);
 
@@ -30,6 +31,7 @@ router.delete('/users/:id', adminOnly, users.deleteUser);
 
 router.get('/products', products.listProducts);
 router.post('/products', authorize('admin', 'warehouseManager'), products.createProduct);
+router.get('/products/:id/availability', authorize('admin', 'salesRepresentative', 'warehouseManager'), products.productAvailability);
 router.get('/products/:id', products.getProduct);
 router.put('/products/:id', authorize('admin', 'warehouseManager'), products.updateProduct);
 router.delete('/products/:id', adminOnly, products.deleteProduct);
@@ -54,6 +56,7 @@ router.post('/stock/out', authorize('admin', 'warehouseManager'), stock.stockOut
 router.get('/transactions', authorize('admin', 'warehouseManager'), transactions.listTransactions);
 
 router.get('/orders/summary', adminOnly, orders.orderSummary);
+router.post('/orders/precheck', authorize('admin', 'salesRepresentative'), orders.precheckOrder);
 router.post('/orders', authorize('admin', 'salesRepresentative'), orders.createOrder);
 router.get('/orders', orders.listOrders);
 router.get('/orders/:id', orders.getOrder);

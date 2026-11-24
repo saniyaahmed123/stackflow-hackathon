@@ -1,9 +1,11 @@
 import { Product } from '../models/Product.js';
 import { User } from '../models/User.js';
 import { Stock } from '../models/Stock.js';
+import { Warehouse } from '../models/Warehouse.js';
 import { deleteImageKitFile, isImageKitUrl } from '../config/imagekit.js';
 import { assignedWarehouseIds } from '../middleware/auth.js';
 import { asyncHandler, fail, isObjectId, ok, priceValue } from '../utils/http.js';
+import { listOptions, paginateArray, setPaginationHeaders, sortArray } from '../utils/list.js';
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -43,6 +45,9 @@ export const listProducts = asyncHandler(async (req, res) => {
   }
   if (req.query.category) query.category = new RegExp(`^${escapeRegex(req.query.category)}$`, 'i');
   if (req.query.supplier) query.supplier = req.query.supplier;
+  if (req.query.archived === 'true' || req.query.archived === 'false') {
+    query.archived = req.query.archived === 'true';
+  }
 
   if (req.user.role === 'supplier') query.supplier = req.user._id;
   if (req.user.role === 'warehouseManager' && req.query.managedOnly === 'true') {
@@ -51,10 +56,20 @@ export const listProducts = asyncHandler(async (req, res) => {
     query._id = { $in: withStock };
   }
 
+  const opts = listOptions(req, {
+    sortFields: {
+      createdAt: 'createdAt',
+      name: 'name',
+      sku: 'sku',
+      category: 'category',
+      price: 'price',
+      availableStock: 'availableStock',
+    },
+    defaultSort: { createdAt: -1 },
+  });
   const products = await Product.find(query)
     .populate('supplier', 'name email image')
     .populate('createdBy', 'name email')
-    .sort({ createdAt: -1 })
     .lean();
   const totals = await stockTotals();
   let data = products.map((product) => ({
@@ -65,6 +80,45 @@ export const listProducts = asyncHandler(async (req, res) => {
   if (req.query.lowStock === 'true') {
     data = data.filter((product) => product.availableStock < (product.lowStockLimit || 0));
   }
+
+  data = sortArray(data, opts.sort);
+  setPaginationHeaders(res, opts.page, opts.limit, data.length);
+  return ok(res, paginateArray(data, opts.page, opts.limit));
+});
+
+export const productAvailability = asyncHandler(async (req, res) => {
+  if (!['admin', 'salesRepresentative', 'warehouseManager'].includes(req.user.role)) {
+    return fail(res, 403, 'Product availability is available to admins, sales reps and managers');
+  }
+  if (!isObjectId(req.params.id)) return fail(res, 400, 'Product must be a valid id.');
+  const product = await Product.findById(req.params.id).lean();
+  if (!product) return fail(res, 404, 'Product not found');
+
+  const warehouseQuery = {};
+  const assigned = req.user.role === 'warehouseManager' ? assignedWarehouseIds(req.user).map(String) : null;
+  if (assigned) warehouseQuery._id = { $in: assigned };
+  if (req.query.warehouseId && isObjectId(req.query.warehouseId)) {
+    if (assigned && !assigned.includes(String(req.query.warehouseId))) return ok(res, []);
+    warehouseQuery._id = req.query.warehouseId;
+  }
+  if (req.query.warehouse) {
+    warehouseQuery.name = new RegExp(escapeRegex(req.query.warehouse), 'i');
+  }
+
+  const warehouses = await Warehouse.find(warehouseQuery).sort({ name: 1 }).lean();
+  const [stocks, usageRows] = await Promise.all([
+    Stock.find({ product: product._id }).lean(),
+    Stock.aggregate([{ $group: { _id: '$warehouse', total: { $sum: '$quantity' } } }]),
+  ]);
+  const stockMap = new Map(stocks.map((stock) => [String(stock.warehouse), stock.quantity || 0]));
+  const usageMap = new Map(usageRows.map((row) => [String(row._id), row.total || 0]));
+
+  const data = warehouses.map((warehouse) => ({
+    warehouseId: String(warehouse._id),
+    warehouseName: warehouse.name,
+    availableQuantity: stockMap.get(String(warehouse._id)) || 0,
+    remainingCapacity: Math.max((Number(warehouse.capacity) || 0) - (usageMap.get(String(warehouse._id)) || 0), 0),
+  }));
   return ok(res, data);
 });
 
@@ -83,6 +137,7 @@ export const createProduct = asyncHandler(async (req, res) => {
   const sku = String(req.body.sku || '').trim().toUpperCase();
   const price = priceValue(req.body.price);
   const lowStockLimit = Number(req.body.lowStockLimit ?? 5);
+  const archived = req.body.archived === true || req.body.archived === 'true';
 
   if (!canWriteProducts(req.user)) {
     return fail(res, 403, 'Only admins and warehouse managers can create products.');
@@ -117,6 +172,7 @@ export const createProduct = asyncHandler(async (req, res) => {
     category: String(req.body.category || 'General').trim() || 'General',
     price,
     lowStockLimit,
+    archived,
     supplier,
     createdBy: req.user._id,
     ...image.fields,
@@ -146,6 +202,9 @@ export const updateProduct = asyncHandler(async (req, res) => {
       return fail(res, 400, 'Low stock limit must be a whole number of 0 or greater.');
     }
     product.lowStockLimit = limit;
+  }
+  if (req.body.archived !== undefined) {
+    product.archived = req.body.archived === true || req.body.archived === 'true';
   }
   if (req.body.sku !== undefined) {
     const sku = String(req.body.sku).trim().toUpperCase();

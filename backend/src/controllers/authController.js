@@ -49,6 +49,9 @@ export const login = asyncHandler(async (req, res) => {
   if (!user || !(await bcrypt.compare(password, user.password))) {
     return fail(res, 401, 'Invalid email or password');
   }
+  if (user.isActive === false) {
+    return fail(res, 403, 'This account is deactivated. Please contact an administrator.');
+  }
 
   return ok(res, { token: signToken(user), user: user.toJSON() }, 'Logged in');
 });

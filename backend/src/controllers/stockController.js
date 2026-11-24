@@ -128,10 +128,19 @@ export const lowStock = asyncHandler(async (req, res) => {
     .populate('warehouse', 'name location')
     .lean();
   const data = stocks
-    .filter((stock) => stock.product && stock.quantity < (stock.product.lowStockLimit || 0))
-    .map((stock) => ({
-      ...stock,
-      shortfall: (stock.product.lowStockLimit || 0) - stock.quantity,
-    }));
+    .filter((stock) => stock.product && (Number(stock.quantity) === 0 || Number(stock.quantity) < (Number(stock.product.lowStockLimit) || 0)))
+    .map((stock) => {
+      const threshold = Number(stock.product.lowStockLimit) || 0;
+      const quantity = Number(stock.quantity) || 0;
+      const unitsBelowThreshold = Math.max(threshold - quantity, 0);
+      return {
+        ...stock,
+        threshold,
+        lowStock: quantity === 0 || quantity < threshold,
+        outOfStock: quantity === 0,
+        unitsBelowThreshold,
+        shortfall: unitsBelowThreshold,
+      };
+    });
   return ok(res, data);
 });

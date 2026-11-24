@@ -16,7 +16,9 @@ export const protect = asyncHandler(async (req, res, next) => {
     const user = await User.findById(decoded.id)
       .select('-password')
       .populate('assignedWarehouses', 'name location');
-    if (!user) return fail(res, 401, 'Invalid or expired token');
+    if (!user || user.isActive === false) {
+      return fail(res, 401, user ? 'This account is deactivated' : 'Invalid or expired token');
+    }
     req.user = user;
     return next();
   } catch {

@@ -1,8 +1,11 @@
 import { Warehouse } from '../models/Warehouse.js';
 import { User } from '../models/User.js';
 import { Stock } from '../models/Stock.js';
-import { assignedWarehouseIds } from '../middleware/auth.js';
-import { asyncHandler, fail, nonNegativeInt, ok } from '../utils/http.js';
+import { assignedWarehouseIds, canManageWarehouse } from '../middleware/auth.js';
+import { asyncHandler, fail, isObjectId, nonNegativeInt, ok } from '../utils/http.js';
+import { listOptions, setPaginationHeaders } from '../utils/list.js';
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const populate = (query) => query.populate('manager', 'name email role image');
 
@@ -11,13 +14,33 @@ export const listWarehouses = asyncHandler(async (req, res) => {
   if (req.user.role === 'warehouseManager') {
     query._id = { $in: assignedWarehouseIds(req.user) };
   }
-  const warehouses = await populate(Warehouse.find(query)).sort({ createdAt: -1 });
+  if (req.query.q) {
+    const pattern = new RegExp(escapeRegex(req.query.q), 'i');
+    query.$or = [{ name: pattern }, { location: pattern }];
+  }
+  if (req.query.location) query.location = new RegExp(`^${escapeRegex(req.query.location)}$`, 'i');
+  if (req.query.manager && isObjectId(req.query.manager)) query.manager = req.query.manager;
+
+  const opts = listOptions(req, {
+    sortFields: { createdAt: 'createdAt', name: 'name', location: 'location', capacity: 'capacity' },
+    defaultSort: { createdAt: -1 },
+  });
+  const total = await Warehouse.countDocuments(query);
+  const warehouses = await populate(Warehouse.find(query))
+    .sort(opts.sort)
+    .skip(opts.skip)
+    .limit(opts.limit);
+  setPaginationHeaders(res, opts.page, opts.limit, total);
   return ok(res, warehouses);
 });
 
 export const getWarehouse = asyncHandler(async (req, res) => {
+  if (!isObjectId(req.params.id)) return fail(res, 400, 'Warehouse must be a valid id.');
   const warehouse = await populate(Warehouse.findById(req.params.id));
   if (!warehouse) return fail(res, 404, 'Warehouse not found');
+  if (req.user.role === 'warehouseManager' && !canManageWarehouse(req.user, warehouse._id)) {
+    return fail(res, 403, 'You are not assigned to this warehouse.');
+  }
   return ok(res, warehouse);
 });
 

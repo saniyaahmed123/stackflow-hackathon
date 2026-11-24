@@ -9,6 +9,7 @@ const userSchema = new Schema(
     password: { type: String, required: true, minlength: 6, select: false },
     phone: { type: String, default: '' },
     role: { type: String, enum: ROLES, required: true, default: 'salesRepresentative' },
+    isActive: { type: Boolean, default: true },
     assignedWarehouses: [{ type: Schema.Types.ObjectId, ref: 'Warehouse' }],
     image: { type: String, default: '' },
     imageFileId: { type: String, default: '' },

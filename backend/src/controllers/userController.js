@@ -3,20 +3,57 @@ import { User, ROLES } from '../models/User.js';
 import { isImageKitUrl } from '../config/imagekit.js';
 import { Warehouse } from '../models/Warehouse.js';
 import { asyncHandler, fail, isObjectId, ok } from '../utils/http.js';
+import { listOptions, setPaginationHeaders } from '../utils/list.js';
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const booleanValue = (value) => {
+  if (value === true || String(value).toLowerCase() === 'true') return true;
+  if (value === false || String(value).toLowerCase() === 'false') return false;
+  return null;
+};
+
+const adminChangeError = async (req, user, nextRole, nextActive) => {
+  const actingOnSelf = String(req.user._id) === String(user._id);
+  const demoting = nextRole !== undefined && nextRole !== 'admin';
+  const deactivating = nextActive === false;
+
+  if (actingOnSelf && demoting) return 'You cannot demote your own admin account.';
+  if (user.role === 'admin' && user.isActive !== false && (demoting || deactivating)) {
+    const activeAdmins = await User.countDocuments({ role: 'admin', isActive: { $ne: false } });
+    if (activeAdmins <= 1) {
+      return deactivating
+        ? 'The last active admin cannot be deactivated.'
+        : 'The last active admin cannot be demoted.';
+    }
+  }
+  if (actingOnSelf && deactivating) return 'You cannot deactivate your own account.';
+  return null;
+};
 
 export const listUsers = asyncHandler(async (req, res) => {
   const query = {};
   if (req.query.role && ROLES.includes(req.query.role)) query.role = req.query.role;
+  if (req.query.isActive === 'true' || req.query.isActive === 'false') {
+    query.isActive = req.query.isActive === 'true';
+  }
   if (req.query.q) {
     const pattern = new RegExp(escapeRegex(req.query.q), 'i');
     query.$or = [{ name: pattern }, { email: pattern }, { phone: pattern }];
   }
+
+  const opts = listOptions(req, {
+    sortFields: { createdAt: 'createdAt', name: 'name', email: 'email', role: 'role' },
+    defaultSort: { createdAt: -1 },
+  });
+  const total = await User.countDocuments(query);
   const users = await User.find(query)
     .select('-password')
     .populate('assignedWarehouses', 'name location')
-    .sort({ createdAt: -1 });
+    .sort(opts.sort)
+    .skip(opts.skip)
+    .limit(opts.limit);
+  setPaginationHeaders(res, opts.page, opts.limit, total);
   return ok(res, users);
 });
 
@@ -101,7 +138,16 @@ export const updateUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
   if (!user) return fail(res, 404, 'User not found');
 
-  const { name, email, phone, role, assignedWarehouses, password, image, imageFileId } = req.body;
+  const { name, email, phone, role, isActive, assignedWarehouses, password, image, imageFileId } = req.body;
+  const nextRole = role === undefined ? undefined : String(role);
+  let nextActive;
+  if (isActive !== undefined) {
+    nextActive = booleanValue(isActive);
+    if (nextActive === null) return fail(res, 400, 'isActive must be true or false');
+  }
+  if (nextRole !== undefined && !ROLES.includes(nextRole)) return fail(res, 400, 'Invalid role');
+  const guardError = await adminChangeError(req, user, nextRole, nextActive);
+  if (guardError) return fail(res, 400, guardError);
 
   if (name !== undefined) user.name = String(name).trim();
   if (phone !== undefined) user.phone = String(phone);
@@ -111,10 +157,8 @@ export const updateUser = asyncHandler(async (req, res) => {
     if (duplicate) return fail(res, 409, `Email "${normalized}" is already in use by another account.`);
     user.email = normalized;
   }
-  if (role !== undefined) {
-    if (!ROLES.includes(role)) return fail(res, 400, 'Invalid role');
-    user.role = role;
-  }
+  if (nextRole !== undefined) user.role = nextRole;
+  if (nextActive !== undefined) user.isActive = nextActive;
   if (assignedWarehouses !== undefined) {
     if (!Array.isArray(assignedWarehouses) || assignedWarehouses.some((id) => !isObjectId(id))) {
       return fail(res, 400, 'assignedWarehouses must be an array of warehouse ids');
@@ -176,7 +220,12 @@ export const updateMe = asyncHandler(async (req, res) => {
 
 export const deleteUser = asyncHandler(async (req, res) => {
   if (String(req.user._id) === req.params.id) return fail(res, 400, 'You cannot delete your own account');
-  const user = await User.findByIdAndDelete(req.params.id);
+  const user = await User.findById(req.params.id);
   if (!user) return fail(res, 404, 'User not found');
+  if (user.role === 'admin' && user.isActive !== false) {
+    const activeAdmins = await User.countDocuments({ role: 'admin', isActive: { $ne: false } });
+    if (activeAdmins <= 1) return fail(res, 400, 'The last active admin cannot be deleted.');
+  }
+  await user.deleteOne();
   return ok(res, { id: user._id }, 'User deleted');
 });
