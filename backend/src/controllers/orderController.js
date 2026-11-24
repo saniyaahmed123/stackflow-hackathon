@@ -5,6 +5,7 @@ import { Stock } from '../models/Stock.js';
 import { StockTransaction } from '../models/StockTransaction.js';
 import { Warehouse } from '../models/Warehouse.js';
 import { assignedWarehouseIds, canManageWarehouse } from '../middleware/auth.js';
+import { addStockWithCapacity } from '../utils/capacity.js';
 import { withTransaction } from '../utils/transaction.js';
 import {
   asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt, stockShortfallMessage,
@@ -117,9 +118,30 @@ export const getOrder = asyncHandler(async (req, res) => {
   return ok(res, order);
 });
 
+async function setOrderStatus(orderId, expectedStatus, nextStatus, session, extra = {}) {
+  const options = session ? { session } : undefined;
+  const updated = await Order.updateOne(
+    { _id: orderId, status: expectedStatus },
+    { $set: { status: nextStatus, ...extra } },
+    options
+  );
+  if (updated.matchedCount === 0) {
+    const current = await Order.findById(orderId).select('status').lean();
+    const error = new Error(
+      current
+        ? `Order is currently ${current.status}; expected ${expectedStatus}. It may have been changed by another request.`
+        : `Order "${orderId}" does not exist.`
+    );
+    error.status = current ? 409 : 404;
+    throw error;
+  }
+}
+
 async function deductOrderStock(order, session, rollbacks) {
   const ids = order.products.map((line) => line.product._id || line.product);
-  const products = await Product.find({ _id: { $in: ids } }).select('name sku');
+  const productQuery = Product.find({ _id: { $in: ids } }).select('name sku');
+  if (session) productQuery.session(session);
+  const products = await productQuery;
   const names = new Map(products.map((product) => [String(product._id), product.name]));
   const warehouseId = order.warehouse?._id || order.warehouse;
   const warehouseName = order.warehouse?.name || 'this warehouse';
@@ -134,12 +156,14 @@ async function deductOrderStock(order, session, rollbacks) {
     );
     if (!stock) {
       const current = await Stock.findOne({ product: productId, warehouse: warehouseId }, null, options);
-      throw new Error(stockShortfallMessage({
+      const error = new Error(stockShortfallMessage({
         productName: names.get(String(productId)) || 'Product',
         available: current?.quantity || 0,
         requested: line.quantity,
         warehouseName,
       }));
+      error.status = 400;
+      throw error;
     }
 
     const txData = {
@@ -164,6 +188,22 @@ async function deductOrderStock(order, session, rollbacks) {
   }
 }
 
+async function restoreOrderStock(order, session, rollbacks) {
+  const warehouseId = order.warehouse?._id || order.warehouse;
+  for (const line of order.products) {
+    const productId = line.product._id || line.product;
+    await addStockWithCapacity({
+      productId,
+      warehouseId,
+      quantity: line.quantity,
+      performedBy: order.createdBy?._id || order.createdBy,
+      note: `Order ${order.orderNumber} cancelled`,
+      session,
+      rollbacks,
+    });
+  }
+}
+
 export const updateStatus = asyncHandler(async (req, res) => {
   const status = String(req.body.status || '');
   if (!['Processing', 'Completed'].includes(status)) {
@@ -177,29 +217,30 @@ export const updateStatus = asyncHandler(async (req, res) => {
   if (!canManageWarehouse(req.user, order.warehouse?._id || order.warehouse)) {
     return fail(res, 403, 'You are not assigned to this warehouse.');
   }
-  if (order.status === 'Cancelled') {
-    return fail(res, 400, 'Cancelled orders cannot be processed again.');
-  }
-  if (order.status === 'Completed') {
-    return fail(res, 400, 'Completed orders cannot be processed again.');
-  }
-  if (order.status === status) return fail(res, 400, `Order is already ${status}.`);
-  if (status === 'Processing' && order.status !== 'Pending') {
-    return fail(res, 400, `Only Pending orders can move to Processing. This order is ${order.status}.`);
+
+  const expected = status === 'Processing' ? 'Pending' : 'Processing';
+  if (order.status !== expected) {
+    if (order.status === 'Cancelled') return fail(res, 400, 'Cancelled orders cannot be processed again.');
+    if (order.status === 'Completed') return fail(res, 400, 'Completed orders cannot be processed again.');
+    if (status === 'Processing') {
+      return fail(res, 400, `Only Pending orders can move to Processing. This order is ${order.status}.`);
+    }
+    return fail(res, 400, `Only Processing orders can be completed. This order is ${order.status}.`);
   }
 
   try {
     await withTransaction(async (session, rollbacks) => {
-      if (order.status === 'Pending') {
+      const extra = {};
+      if (status === 'Processing') {
         await deductOrderStock(order, session, rollbacks);
-        order.processedAt = new Date();
+        extra.processedAt = new Date();
+      } else {
+        extra.completedAt = new Date();
       }
-      order.status = status;
-      if (status === 'Completed') order.completedAt = new Date();
-      await order.save(session ? { session } : undefined);
+      await setOrderStatus(order._id, expected, status, session, extra);
     });
   } catch (error) {
-    return fail(res, 400, error.message || 'Order could not be processed');
+    return fail(res, error.status || 400, error.message || 'Order could not be processed');
   }
 
   order = await populateOrder(Order.findById(order._id));
@@ -207,17 +248,28 @@ export const updateStatus = asyncHandler(async (req, res) => {
 });
 
 export const cancelOrder = asyncHandler(async (req, res) => {
-  const order = await populateOrder(Order.findById(req.params.id));
+  let order = await populateOrder(Order.findById(req.params.id));
   if (!order) return fail(res, 404, `Order "${req.params.id}" does not exist.`);
   if (req.user.role === 'salesRepresentative' && String(order.createdBy?._id || order.createdBy) !== String(req.user._id)) {
     return fail(res, 403, 'You can only cancel orders you created.');
   }
-  if (order.status !== 'Pending') {
-    return fail(res, 400, `Only Pending orders can be cancelled. This order is ${order.status}.`);
+  if (!['Pending', 'Processing'].includes(order.status)) {
+    return fail(res, 400, `Only Pending or Processing orders can be cancelled. This order is ${order.status}.`);
   }
-  order.status = 'Cancelled';
-  order.cancelledAt = new Date();
-  await order.save();
+
+  const expected = order.status;
+  try {
+    await withTransaction(async (session, rollbacks) => {
+      if (expected === 'Processing') {
+        await restoreOrderStock(order, session, rollbacks);
+      }
+      await setOrderStatus(order._id, expected, 'Cancelled', session, { cancelledAt: new Date() });
+    });
+  } catch (error) {
+    return fail(res, error.status || 400, error.message || 'Order could not be cancelled');
+  }
+
+  order = await populateOrder(Order.findById(order._id));
   return ok(res, order, 'Order cancelled');
 });
 

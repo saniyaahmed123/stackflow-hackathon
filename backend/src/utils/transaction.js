@@ -26,7 +26,15 @@ export function usingTransactions() {
  * supports it. On a standalone mongod the same work runs with `session = null`
  * and any registered rollback callbacks are executed in reverse order on error.
  */
-export async function withTransaction(work) {
+const isTransientTransactionError = (error) =>
+  Boolean(
+    error?.errorLabels?.includes('TransientTransactionError') ||
+      error?.codeName === 'WriteConflict' ||
+      error?.code === 112 ||
+      /write conflict/i.test(error?.message || '')
+  );
+
+export async function withTransaction(work, retries = 4) {
   if (!transactionsSupported) {
     const rollbacks = [];
     try {
@@ -43,16 +51,22 @@ export async function withTransaction(work) {
     }
   }
 
-  const session = await mongoose.startSession();
-  try {
-    session.startTransaction();
-    const result = await work(session, []);
-    await session.commitTransaction();
-    return result;
-  } catch (error) {
-    if (session.inTransaction()) await session.abortTransaction();
-    throw error;
-  } finally {
-    await session.endSession();
+  let lastError;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      const result = await work(session, []);
+      await session.commitTransaction();
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (session.inTransaction()) await session.abortTransaction();
+      if (!isTransientTransactionError(error) || attempt === retries - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+    } finally {
+      await session.endSession();
+    }
   }
+  throw lastError;
 }

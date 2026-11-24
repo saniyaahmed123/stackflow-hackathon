@@ -3,6 +3,8 @@ import { Warehouse } from '../models/Warehouse.js';
 import { Stock } from '../models/Stock.js';
 import { StockTransaction } from '../models/StockTransaction.js';
 import { assignedWarehouseIds, canManageWarehouse } from '../middleware/auth.js';
+import { addStockWithCapacity } from '../utils/capacity.js';
+import { withTransaction } from '../utils/transaction.js';
 import {
   asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt, stockShortfallMessage,
 } from '../utils/http.js';
@@ -31,21 +33,22 @@ export const stockIn = asyncHandler(async (req, res) => {
   const refs = await resolveReferences(req.body.productId, req.body.warehouseId);
   if (refs.error) return fail(res, 400, refs.error);
 
-  const stock = await Stock.findOneAndUpdate(
-    { product: refs.product._id, warehouse: refs.warehouse._id },
-    { $inc: { quantity } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
-  const transaction = await StockTransaction.create({
-    product: refs.product._id,
-    warehouse: refs.warehouse._id,
-    transactionType: 'stock-in',
-    quantity,
-    note: String(req.body.note || 'Stock added'),
-    performedBy: req.user._id,
-  });
+  let result;
+  try {
+    result = await withTransaction(async (session, rollbacks) => addStockWithCapacity({
+      productId: refs.product._id,
+      warehouseId: refs.warehouse._id,
+      quantity,
+      performedBy: req.user._id,
+      note: String(req.body.note || 'Stock added'),
+      session,
+      rollbacks,
+    }));
+  } catch (error) {
+    return fail(res, error.status || 400, error.message);
+  }
 
-  return ok(res, { stock, transaction }, `${quantity} unit(s) added to stock`);
+  return ok(res, { stock: result.stock, transaction: result.transaction }, `${quantity} unit(s) added to stock`);
 });
 
 export const stockOut = asyncHandler(async (req, res) => {

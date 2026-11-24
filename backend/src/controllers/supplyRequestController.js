@@ -1,9 +1,8 @@
 import { SupplyRequest } from '../models/SupplyRequest.js';
 import { Product } from '../models/Product.js';
 import { Warehouse } from '../models/Warehouse.js';
-import { Stock } from '../models/Stock.js';
-import { StockTransaction } from '../models/StockTransaction.js';
 import { assignedWarehouseIds } from '../middleware/auth.js';
+import { addStockWithCapacity } from '../utils/capacity.js';
 import { withTransaction } from '../utils/transaction.js';
 import { asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt } from '../utils/http.js';
 
@@ -83,43 +82,40 @@ export const reviewRequest = asyncHandler(async (req, res) => {
   try {
     await withTransaction(async (session, rollbacks) => {
       if (status === 'Approved') {
-        const options = session ? { session } : {};
-        const stock = await Stock.findOneAndUpdate(
-          { product: request.product, warehouse: request.warehouse },
-          { $inc: { quantity: request.quantity } },
-          { new: true, upsert: true, setDefaultsOnInsert: true, ...options }
-        );
-        const txData = {
-          product: request.product,
-          warehouse: request.warehouse,
-          transactionType: 'stock-in',
+        await addStockWithCapacity({
+          productId: request.product,
+          warehouseId: request.warehouse,
           quantity: request.quantity,
-          note: `Supply request approved${request.note ? `: ${request.note}` : ''}`,
           performedBy: req.user._id,
-          date: new Date(),
-        };
-        const transaction = session
-          ? (await StockTransaction.create([txData], { session }))[0]
-          : await StockTransaction.create(txData);
-        if (!session) {
-          rollbacks.push(async () => {
-            await Stock.updateOne(
-              { product: request.product, warehouse: request.warehouse },
-              { $inc: { quantity: -request.quantity } }
-            );
-            await StockTransaction.deleteOne({ _id: transaction._id });
-          });
-        }
-        void stock;
+          note: `Supply request approved${request.note ? `: ${request.note}` : ''}`,
+          session,
+          rollbacks,
+        });
       }
-      request.status = status;
-      request.reviewedBy = req.user._id;
-      request.reviewedAt = new Date();
-      request.reviewNote = reason;
-      await request.save(session ? { session } : undefined);
+      const options = session ? { session } : undefined;
+      const updated = await SupplyRequest.updateOne(
+        { _id: request._id, status: 'Pending' },
+        {
+          $set: {
+            status,
+            reviewedBy: req.user._id,
+            reviewedAt: new Date(),
+            reviewNote: reason,
+          },
+        },
+        options
+      );
+      if (updated.matchedCount === 0) {
+        const current = await SupplyRequest.findById(request._id).select('status').lean();
+        const error = new Error(
+          current ? `This request has already been ${String(current.status).toLowerCase()}.` : 'Supply request not found.'
+        );
+        error.status = 409;
+        throw error;
+      }
     });
   } catch (error) {
-    return fail(res, 400, error.message || 'Could not review request');
+    return fail(res, error.status || 400, error.message || 'Could not review request');
   }
 
   return ok(res, await populateRequest(SupplyRequest.findById(request._id)), `Request ${status.toLowerCase()}`);
