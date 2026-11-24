@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import BrandMark from './BrandMark';
 
 const NAV = {
   admin: [
@@ -8,6 +9,8 @@ const NAV = {
     { to: '/admin/users', label: 'Users' },
     { to: '/admin/products', label: 'Products' },
     { to: '/admin/warehouses', label: 'Warehouses' },
+    { to: '/admin/suppliers', label: 'Suppliers' },
+    { to: '/admin/supply-requests', label: 'Supply Requests' },
     { to: '/admin/orders', label: 'Orders' },
     { to: '/admin/transactions', label: 'Stock Transactions' },
     { to: '/admin/low-stock', label: 'Low Stock' },
@@ -15,6 +18,7 @@ const NAV = {
   warehouseManager: [
     { to: '/manager', label: 'Overview', end: true },
     { to: '/manager/inventory', label: 'Inventory' },
+    { to: '/manager/products', label: 'Products' },
     { to: '/manager/stock', label: 'Stock In / Out' },
     { to: '/manager/transactions', label: 'Transaction History' },
     { to: '/manager/low-stock', label: 'Low Stock' },
@@ -53,9 +57,9 @@ export default function Layout() {
     <div className="app-shell">
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="brand">
-          <span className="brand-mark">SF</span>
+          <BrandMark size={32} />
           <div>
-            <strong>StockFlow</strong>
+            <strong>Parcel Point</strong>
             <small>Inventory Suite</small>
           </div>
         </div>

@@ -23,7 +23,7 @@ app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.get('/api/health', (_req, res) => res.json({ success: true, message: 'StockFlow API is running' }));
+app.get('/api/health', (_req, res) => res.json({ success: true, message: 'Parcel Point API is running' }));
 
 app.use('/api', asyncHandler(async (_req, _res, next) => {
   await ensureDB();

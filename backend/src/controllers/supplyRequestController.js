@@ -5,7 +5,7 @@ import { Stock } from '../models/Stock.js';
 import { StockTransaction } from '../models/StockTransaction.js';
 import { assignedWarehouseIds } from '../middleware/auth.js';
 import { withTransaction } from '../utils/transaction.js';
-import { asyncHandler, fail, isObjectId, ok, positiveInt } from '../utils/http.js';
+import { asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt } from '../utils/http.js';
 
 const populateRequest = (query) =>
   query
@@ -16,17 +16,20 @@ const populateRequest = (query) =>
 
 export const createRequest = asyncHandler(async (req, res) => {
   const quantity = positiveInt(req.body.quantity);
-  if (!quantity) return fail(res, 400, 'Quantity must be a positive whole number');
+  if (!quantity) return fail(res, 400, INVALID_QUANTITY);
+  if (!req.body.productId) return fail(res, 400, 'Product is required.');
+  if (!req.body.warehouseId) return fail(res, 400, 'Warehouse is required.');
   if (!isObjectId(req.body.productId) || !isObjectId(req.body.warehouseId)) {
-    return fail(res, 400, 'A valid product and warehouse are required');
+    return fail(res, 400, 'Product and Warehouse must be valid ids.');
   }
   const [product, warehouse] = await Promise.all([
     Product.findById(req.body.productId),
     Warehouse.findById(req.body.warehouseId),
   ]);
-  if (!product || !warehouse) return fail(res, 404, 'Product or warehouse not found');
+  if (!product) return fail(res, 404, `Product "${req.body.productId}" does not exist.`);
+  if (!warehouse) return fail(res, 404, `Warehouse "${req.body.warehouseId}" does not exist.`);
   if (String(product.supplier) !== String(req.user._id)) {
-    return fail(res, 403, 'You can only request supplies for your own products');
+    return fail(res, 403, 'You can only request supplies for your own products.');
   }
 
   const request = await SupplyRequest.create({
@@ -64,11 +67,18 @@ export const getRequest = asyncHandler(async (req, res) => {
 
 export const reviewRequest = asyncHandler(async (req, res) => {
   const status = String(req.body.status || '');
-  if (!['Approved', 'Rejected'].includes(status)) return fail(res, 400, 'Status must be Approved or Rejected');
+  if (!['Approved', 'Rejected'].includes(status)) return fail(res, 400, 'Status must be Approved or Rejected.');
+
+  const reason = String(req.body.note || '').trim();
+  if (status === 'Rejected' && reason.length < 5) {
+    return fail(res, 400, 'A rejection reason of at least 5 characters is required.');
+  }
 
   const request = await SupplyRequest.findById(req.params.id);
-  if (!request) return fail(res, 404, 'Supply request not found');
-  if (request.status !== 'Pending') return fail(res, 400, 'This request has already been reviewed');
+  if (!request) return fail(res, 404, `Supply request "${req.params.id}" does not exist.`);
+  if (request.status !== 'Pending') {
+    return fail(res, 400, `This request has already been ${request.status.toLowerCase()} and cannot be reviewed again.`);
+  }
 
   try {
     await withTransaction(async (session, rollbacks) => {
@@ -105,7 +115,7 @@ export const reviewRequest = asyncHandler(async (req, res) => {
       request.status = status;
       request.reviewedBy = req.user._id;
       request.reviewedAt = new Date();
-      request.reviewNote = String(req.body.note || '');
+      request.reviewNote = reason;
       await request.save(session ? { session } : undefined);
     });
   } catch (error) {

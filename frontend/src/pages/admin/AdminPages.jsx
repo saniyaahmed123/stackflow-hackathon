@@ -26,11 +26,12 @@ const Status = ({ value }) => <Badge status={value} />;
 
 export function AdminOverview() {
   const { data, error } = useLoad(async () => {
-    const [summary, users, products, warehouses, low, orders, transactions] = await Promise.all([
+    const [summary, users, products, warehouses, suppliers, low, orders, transactions] = await Promise.all([
       api.get('/orders/summary'),
       api.get('/users'),
       api.get('/products'),
       api.get('/warehouses'),
+      api.get('/users/suppliers/summary'),
       api.get('/stock/low'),
       api.get('/orders'),
       api.get('/transactions?limit=6'),
@@ -40,6 +41,7 @@ export function AdminOverview() {
       users: users.data.data,
       products: products.data.data,
       warehouses: warehouses.data.data,
+      suppliers: suppliers.data.data,
       low: low.data.data,
       orders: orders.data.data,
       transactions: transactions.data.data,
@@ -51,13 +53,17 @@ export function AdminOverview() {
 
   return (
     <>
-      <PageHeader title={`Welcome back, ${user?.name?.split(' ')[0]}`} subtitle="Warehouse operations at a glance" />
-      <div className="stat-grid">
-        <StatCard label="Users" value={data.users.length} hint="Accounts in the system" />
-        <StatCard label="Products" value={data.products.length} hint={`${data.warehouses.length} warehouses`} tone="info" />
-        <StatCard label="Orders" value={data.summary.totalOrders} hint={`${data.summary.pending} pending`} tone="warn" />
-        <StatCard label="Revenue" value={money(data.summary.revenue)} hint="Excludes cancelled orders" tone="success" />
-        <StatCard label="Low stock alerts" value={data.low.length} hint="Needs attention" tone="danger" />
+      <PageHeader
+        title={`Welcome back, ${user?.name?.split(' ')[0]}`}
+        subtitle={`${data.summary.pending} pending orders · ${money(data.summary.revenue)} revenue (excludes cancelled)`}
+      />
+      <div className="stat-grid six">
+        <StatCard to="/admin/users" label="Users" value={data.users.length} hint="Accounts in the system" />
+        <StatCard to="/admin/products" label="Products" value={data.products.length} tone="info" />
+        <StatCard to="/admin/warehouses" label="Warehouses" value={data.warehouses.length} tone="info" />
+        <StatCard to="/admin/suppliers" label="Suppliers" value={data.suppliers.length} tone="success" />
+        <StatCard to="/admin/orders" label="Orders" value={data.summary.totalOrders} hint={`${data.summary.pending} pending`} tone="warn" />
+        <StatCard to="/admin/low-stock" label="Low-stock products" value={data.low.length} hint="Needs attention" tone="danger" />
       </div>
       <div className="panel-grid">
         <section className="panel">
@@ -106,6 +112,91 @@ export function AdminOverview() {
 
 const emptyUser = { name: '', email: '', password: '', phone: '', role: 'salesRepresentative', assignedWarehouses: [], image: '', imageFileId: '' };
 
+export function UserModal({ open, onClose, user, warehouses, onSaved }) {
+  const toast = useToast();
+  const [form, setForm] = useState(emptyUser);
+  const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  useEffect(() => {
+    setTouched(false);
+    setForm(user
+      ? { ...emptyUser, ...user, password: '', assignedWarehouses: (user.assignedWarehouses || []).map((w) => w._id || w) }
+      : emptyUser);
+  }, [user]);
+
+  const nameError = form.name.trim() ? '' : 'Name is required.';
+  const emailError = /^\S+@\S+\.\S+$/.test(form.email) ? '' : 'A valid email is required.';
+  const passwordError = user || form.password.length >= 6 ? '' : 'Password must be at least 6 characters.';
+  const canSave = !nameError && !emailError && !passwordError && !busy;
+
+  const save = async (event) => {
+    event.preventDefault();
+    setTouched(true);
+    if (!canSave) return;
+    setBusy(true);
+    try {
+      const payload = {
+        name: form.name.trim(), email: form.email.trim(), phone: form.phone, role: form.role,
+        assignedWarehouses: form.assignedWarehouses, image: form.image, imageFileId: form.imageFileId,
+      };
+      if (form.password) payload.password = form.password;
+      if (user) {
+        await api.put(`/users/${user._id}`, payload);
+      } else {
+        const created = await api.post('/auth/register', {
+          name: payload.name, email: payload.email, password: form.password, phone: form.phone, role: 'salesRepresentative',
+        });
+        await api.put(`/users/${created.data.data.user._id}`, payload);
+      }
+      toast.success(user ? 'User updated' : 'User created');
+      onClose();
+      onSaved?.();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={user ? 'Edit user' : 'Create user'}>
+      <form onSubmit={save} className="form-grid">
+        <Field label="Name" required>
+          <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          {touched && nameError && <small className="field-error">{nameError}</small>}
+        </Field>
+        <Field label="Email" required>
+          <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          {touched && emailError && <small className="field-error">{emailError}</small>}
+        </Field>
+        <Field label="Password" hint={user ? 'Leave blank to keep current' : 'At least 6 characters'}>
+          <input type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          {touched && passwordError && <small className="field-error">{passwordError}</small>}
+        </Field>
+        <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
+        <Field label="Role" required>
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+            {['admin', 'warehouseManager', 'supplier', 'salesRepresentative'].map((role) => <option key={role} value={role}>{role}</option>)}
+          </select>
+        </Field>
+        <Field label="Assigned warehouses" hint="Applies to warehouse managers">
+          <select multiple value={form.assignedWarehouses} onChange={(e) => setForm({ ...form, assignedWarehouses: [...e.target.selectedOptions].map((option) => option.value) })}>
+            {(warehouses || []).map((warehouse) => <option key={warehouse._id} value={warehouse._id}>{warehouse.name}</option>)}
+          </select>
+        </Field>
+        <div className="grid-full">
+          <ImageUpload label="Profile picture" value={form.image || ''} fileId={form.imageFileId || ''} onChange={({ url, fileId }) => setForm({ ...form, image: url, imageFileId: fileId })} />
+        </div>
+        <div className="grid-full form-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={!canSave}>{busy ? 'Saving...' : 'Save user'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export function AdminUsers() {
   const toast = useToast();
   const { data, error, reload } = useLoad(async () => {
@@ -114,39 +205,12 @@ export function AdminUsers() {
   }, []);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(emptyUser);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
 
   const start = (user) => {
     setEditing(user || null);
-    setForm(user ? { ...emptyUser, ...user, password: '', assignedWarehouses: (user.assignedWarehouses || []).map((w) => w._id || w) } : emptyUser);
     setOpen(true);
-  };
-
-  const save = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      const payload = {
-        name: form.name, email: form.email, phone: form.phone, role: form.role,
-        assignedWarehouses: form.assignedWarehouses, image: form.image, imageFileId: form.imageFileId,
-      };
-      if (form.password) payload.password = form.password;
-      if (editing) {
-        await api.put(`/users/${editing._id}`, payload);
-      } else {
-        const created = await api.post('/auth/register', { name: form.name, email: form.email, password: form.password, phone: form.phone, role: 'salesRepresentative' });
-        await api.put(`/users/${created.data.data.user._id}`, payload);
-      }
-      toast.success(editing ? 'User updated' : 'User created');
-      setOpen(false);
-      reload();
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setBusy(false);
-    }
   };
 
   const remove = async () => {
@@ -184,31 +248,7 @@ export function AdminUsers() {
           ))}
         </Table>
       </section>
-      <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'Edit user' : 'Create user'}>
-        <form onSubmit={save} className="form-grid">
-          <Field label="Name" required><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="Email" required><input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Password" hint={editing ? 'Leave blank to keep current' : 'At least 6 characters'}><input type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
-          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-          <Field label="Role" required>
-            <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-              {['admin', 'warehouseManager', 'supplier', 'salesRepresentative'].map((role) => <option key={role} value={role}>{role}</option>)}
-            </select>
-          </Field>
-          <Field label="Assigned warehouses" hint="Applies to warehouse managers">
-            <select multiple value={form.assignedWarehouses} onChange={(e) => setForm({ ...form, assignedWarehouses: [...e.target.selectedOptions].map((option) => option.value) })}>
-              {data.warehouses.map((warehouse) => <option key={warehouse._id} value={warehouse._id}>{warehouse.name}</option>)}
-            </select>
-          </Field>
-          <div className="grid-full">
-            <ImageUpload label="Profile picture" value={form.image} fileId={form.imageFileId} onChange={({ url, fileId }) => setForm({ ...form, image: url, imageFileId: fileId })} />
-          </div>
-          <div className="grid-full form-actions">
-            <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving...' : 'Save user'}</button>
-          </div>
-        </form>
-      </Modal>
+      <UserModal open={open} onClose={() => setOpen(false)} user={editing} warehouses={data.warehouses} onSaved={reload} />
       <ConfirmDialog open={Boolean(deleting)} onClose={() => setDeleting(null)} onConfirm={remove} busy={busy}
         title="Delete user" message={`Delete ${deleting?.name}? This cannot be undone.`} />
     </>
@@ -217,7 +257,7 @@ export function AdminUsers() {
 
 const emptyProduct = { name: '', sku: '', description: '', category: 'Electronics', price: '', lowStockLimit: 5, supplier: '', imageUrl: '', imageFileId: '' };
 
-export function AdminProducts() {
+function ProductsPage({ canDelete = true }) {
   const toast = useToast();
   const { data, error, reload } = useLoad(async () => {
     const [products, suppliers] = await Promise.all([api.get('/products'), api.get('/users/suppliers')]);
@@ -231,9 +271,18 @@ export function AdminProducts() {
   const [imageDirty, setImageDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [touched, setTouched] = useState(false);
+
+  const nameError = form.name.trim() ? '' : 'Name is required.';
+  const skuError = form.sku.trim() ? '' : 'SKU is required.';
+  const priceError = Number(form.price) >= 0 && form.price !== '' ? '' : 'Price is required and must be a non-negative number.';
+  const limitError = Number.isInteger(Number(form.lowStockLimit)) && Number(form.lowStockLimit) >= 0
+    ? '' : 'Low stock limit must be a whole number of 0 or greater.';
+  const canSave = !nameError && !skuError && !priceError && !limitError && !busy;
 
   const start = (product) => {
     setEditing(product || null);
+    setTouched(false);
     setImageDirty(false);
     setForm(product ? { ...emptyProduct, ...product, supplier: product.supplier?._id || '' } : emptyProduct);
     setOpen(true);
@@ -241,6 +290,8 @@ export function AdminProducts() {
 
   const save = async (event) => {
     event.preventDefault();
+    setTouched(true);
+    if (!canSave) return;
     setBusy(true);
     try {
       const payload = {
@@ -286,7 +337,11 @@ export function AdminProducts() {
 
   return (
     <>
-      <PageHeader title="Products" subtitle={`${data.products.length} catalog items`} action={<button className="btn primary" onClick={() => start(null)}>+ Add product</button>} />
+      <PageHeader
+        title={canDelete ? 'Products' : 'Product catalog'}
+        subtitle={canDelete ? `${data.products.length} catalog items` : `${data.products.length} products · create and edit with images`}
+        action={<button className="btn primary" onClick={() => start(null)}>+ Add product</button>}
+      />
       <Toolbar>
         <input className="search" placeholder="Search by name or SKU..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -306,7 +361,7 @@ export function AdminProducts() {
               <td>{product.supplier?.name || '-'}</td>
               <td className="row-actions">
                 <button className="btn small" onClick={() => start(product)}>Edit</button>
-                <button className="btn small danger-ghost" onClick={() => setDeleting(product)}>Delete</button>
+                {canDelete && <button className="btn small danger-ghost" onClick={() => setDeleting(product)}>Delete</button>}
               </td>
             </tr>
           ))}
@@ -314,11 +369,23 @@ export function AdminProducts() {
       </section>
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'Edit product' : 'Add product'} wide>
         <form onSubmit={save} className="form-grid">
-          <Field label="Name" required><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="SKU" required><input required value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></Field>
+          <Field label="Name" required>
+            <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            {touched && nameError && <small className="field-error">{nameError}</small>}
+          </Field>
+          <Field label="SKU" required>
+            <input required value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+            {touched && skuError && <small className="field-error">{skuError}</small>}
+          </Field>
           <Field label="Category"><input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></Field>
-          <Field label="Price (PKR)" required><input required type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-          <Field label="Low stock limit"><input type="number" min="0" value={form.lowStockLimit} onChange={(e) => setForm({ ...form, lowStockLimit: e.target.value })} /></Field>
+          <Field label="Price (PKR)" required>
+            <input required type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+            {touched && priceError && <small className="field-error">{priceError}</small>}
+          </Field>
+          <Field label="Low stock limit">
+            <input type="number" min="0" value={form.lowStockLimit} onChange={(e) => setForm({ ...form, lowStockLimit: e.target.value })} />
+            {touched && limitError && <small className="field-error">{limitError}</small>}
+          </Field>
           <Field label="Supplier">
             <select value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })}>
               <option value="">None</option>
@@ -332,14 +399,24 @@ export function AdminProducts() {
           </div>
           <div className="grid-full form-actions">
             <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving...' : 'Save product'}</button>
+            <button type="submit" className="btn primary" disabled={!canSave}>{busy ? 'Saving...' : 'Save product'}</button>
           </div>
         </form>
       </Modal>
-      <ConfirmDialog open={Boolean(deleting)} onClose={() => setDeleting(null)} onConfirm={remove} busy={busy}
-        title="Delete product" message={`Delete ${deleting?.name}? Its stock records will be removed.`} />
+      {canDelete && (
+        <ConfirmDialog open={Boolean(deleting)} onClose={() => setDeleting(null)} onConfirm={remove} busy={busy}
+          title="Delete product" message={`Delete ${deleting?.name}? Its stock records will be removed.`} />
+      )}
     </>
   );
+}
+
+export function AdminProducts() {
+  return <ProductsPage canDelete />;
+}
+
+export function ManagerProducts() {
+  return <ProductsPage canDelete={false} />;
 }
 
 const emptyWarehouse = { name: '', location: '', capacity: 0, manager: '' };
@@ -355,14 +432,24 @@ export function AdminWarehouses() {
   const [form, setForm] = useState(emptyWarehouse);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [touched, setTouched] = useState(false);
+
+  const nameError = form.name.trim() ? '' : 'Warehouse name is required.';
+  const locationError = form.location.trim() ? '' : 'Warehouse location is required.';
+  const capacityError = Number.isInteger(Number(form.capacity)) && Number(form.capacity) >= 0
+    ? '' : 'Capacity must be a whole number of 0 or greater.';
+  const canSave = !nameError && !locationError && !capacityError && !busy;
 
   const start = (warehouse) => {
     setEditing(warehouse || null);
+    setTouched(false);
     setForm(warehouse ? { ...emptyWarehouse, ...warehouse, manager: warehouse.manager?._id || '' } : emptyWarehouse);
     setOpen(true);
   };
   const save = async (event) => {
     event.preventDefault();
+    setTouched(true);
+    if (!canSave) return;
     setBusy(true);
     try {
       const payload = { ...form, manager: form.manager || null };
@@ -413,9 +500,18 @@ export function AdminWarehouses() {
       </section>
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'Edit warehouse' : 'Add warehouse'}>
         <form onSubmit={save} className="form-grid">
-          <Field label="Name" required><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="Location" required><input required value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
-          <Field label="Capacity"><input type="number" min="0" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} /></Field>
+          <Field label="Name" required>
+            <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            {touched && nameError && <small className="field-error">{nameError}</small>}
+          </Field>
+          <Field label="Location" required>
+            <input required value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+            {touched && locationError && <small className="field-error">{locationError}</small>}
+          </Field>
+          <Field label="Capacity">
+            <input type="number" min="0" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
+            {touched && capacityError && <small className="field-error">{capacityError}</small>}
+          </Field>
           <Field label="Manager">
             <select value={form.manager} onChange={(e) => setForm({ ...form, manager: e.target.value })}>
               <option value="">Unassigned</option>
@@ -424,7 +520,7 @@ export function AdminWarehouses() {
           </Field>
           <div className="grid-full form-actions">
             <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving...' : 'Save warehouse'}</button>
+            <button type="submit" className="btn primary" disabled={!canSave}>{busy ? 'Saving...' : 'Save warehouse'}</button>
           </div>
         </form>
       </Modal>

@@ -25,6 +25,67 @@ export const listSuppliers = asyncHandler(async (_req, res) => {
   return ok(res, suppliers);
 });
 
+export const listSupplierSummaries = asyncHandler(async (_req, res) => {
+  const suppliers = await User.aggregate([
+    { $match: { role: 'supplier' } },
+    {
+      $lookup: {
+        from: 'products',
+        let: { supplierId: '$_id' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$supplier', '$$supplierId'] } } },
+          { $project: { name: 1, sku: 1, category: 1, price: 1, imageUrl: 1 } },
+          { $sort: { name: 1 } },
+        ],
+        as: 'products',
+      },
+    },
+    {
+      $lookup: {
+        from: 'supplyrequests',
+        let: { supplierId: '$_id' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$supplier', '$$supplierId'] } } },
+          { $group: { _id: null, total: { $sum: 1 }, pending: { $sum: { $cond: [{ $eq: ['$status', 'Pending'] }, 1, 0] } } } },
+        ],
+        as: 'requestCounts',
+      },
+    },
+    {
+      $lookup: {
+        from: 'supplyrequests',
+        let: { supplierId: '$_id' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$supplier', '$$supplierId'] } } },
+          { $sort: { createdAt: -1 } },
+          { $limit: 5 },
+          { $lookup: { from: 'products', localField: 'product', foreignField: '_id', as: 'product' } },
+          { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
+          { $lookup: { from: 'warehouses', localField: 'warehouse', foreignField: '_id', as: 'warehouse' } },
+          { $unwind: { path: '$warehouse', preserveNullAndEmptyArrays: true } },
+          {
+            $project: {
+              status: 1, quantity: 1, createdAt: 1, reviewNote: 1, reviewedAt: 1,
+              productName: '$product.name', warehouseName: '$warehouse.name',
+            },
+          },
+        ],
+        as: 'recentRequests',
+      },
+    },
+    {
+      $addFields: {
+        productCount: { $size: '$products' },
+        totalRequests: { $ifNull: [{ $arrayElemAt: ['$requestCounts.total', 0] }, 0] },
+        pendingRequests: { $ifNull: [{ $arrayElemAt: ['$requestCounts.pending', 0] }, 0] },
+      },
+    },
+    { $sort: { name: 1 } },
+    { $project: { requestCounts: 0, password: 0, __v: 0 } },
+  ]);
+  return ok(res, suppliers);
+});
+
 export const getUser = asyncHandler(async (req, res) => {
   if (req.user.role !== 'admin' && String(req.user._id) !== req.params.id) {
     return fail(res, 403, 'You can only view your own profile');
@@ -47,7 +108,7 @@ export const updateUser = asyncHandler(async (req, res) => {
   if (email !== undefined) {
     const normalized = String(email).trim().toLowerCase();
     const duplicate = await User.findOne({ email: normalized, _id: { $ne: user._id } });
-    if (duplicate) return fail(res, 409, 'Email is already in use');
+    if (duplicate) return fail(res, 409, `Email "${normalized}" is already in use by another account.`);
     user.email = normalized;
   }
   if (role !== undefined) {
@@ -94,7 +155,7 @@ export const updateMe = asyncHandler(async (req, res) => {
   if (email !== undefined) {
     const normalized = String(email).trim().toLowerCase();
     const duplicate = await User.findOne({ email: normalized, _id: { $ne: user._id } });
-    if (duplicate) return fail(res, 409, 'Email is already in use');
+    if (duplicate) return fail(res, 409, `Email "${normalized}" is already in use by another account.`);
     user.email = normalized;
   }
   const imageChanged = image !== undefined && String(image) !== user.image;

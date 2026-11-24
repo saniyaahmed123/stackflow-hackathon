@@ -97,11 +97,18 @@ export function SupplierRequests() {
   }, []);
   const [form, setForm] = useState(emptyRequest);
   const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
+
+  const quantityError = Number.isInteger(Number(form.quantity)) && Number(form.quantity) > 0
+    ? '' : 'Quantity must be a whole number greater than 0.';
+  const canSubmit = Boolean(form.productId) && Boolean(form.warehouseId) && !quantityError && !busy;
 
   if (!data) return error ? <Empty message={error} /> : <Loading />;
 
   const submit = async (event) => {
     event.preventDefault();
+    setTouched(true);
+    if (!canSubmit) return;
     setBusy(true);
     try {
       await api.post('/supply-requests', form);
@@ -127,21 +134,26 @@ export function SupplierRequests() {
                 <option value="">Select your product</option>
                 {data.products.map((product) => <option key={product._id} value={product._id}>{product.name}</option>)}
               </select>
+              {touched && !form.productId && <small className="field-error">Product is required.</small>}
             </Field>
             <Field label="Warehouse" required>
               <select required value={form.warehouseId} onChange={(e) => setForm({ ...form, warehouseId: e.target.value })}>
                 <option value="">Select warehouse</option>
                 {data.warehouses.map((warehouse) => <option key={warehouse._id} value={warehouse._id}>{warehouse.name}</option>)}
               </select>
+              {touched && !form.warehouseId && <small className="field-error">Warehouse is required.</small>}
             </Field>
-            <Field label="Quantity" required><input required type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} /></Field>
+            <Field label="Quantity" required>
+              <input required type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+              {touched && quantityError && <small className="field-error">{quantityError}</small>}
+            </Field>
             <Field label="Note"><textarea rows={2} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Submitting...' : 'Submit request'}</button>
+            <button type="submit" className="btn primary" disabled={!canSubmit}>{busy ? 'Submitting...' : 'Submit request'}</button>
           </form>
         </section>
         <section className="panel">
           <div className="panel-head"><h2>Request history</h2></div>
-          <Table head={['Product', 'Warehouse', 'Qty', 'Status', 'Date']} empty={!data.requests.length}>
+          <Table head={['Product', 'Warehouse', 'Qty', 'Status', 'Requested', 'Reviewed', 'Review note']} empty={!data.requests.length}>
             {data.requests.map((request) => (
               <tr key={request._id}>
                 <td>{request.product?.name || '-'}</td>
@@ -149,6 +161,8 @@ export function SupplierRequests() {
                 <td>{request.quantity}</td>
                 <td><Badge status={request.status} /></td>
                 <td>{formatDate(request.createdAt)}</td>
+                <td>{request.reviewedAt ? formatDate(request.reviewedAt) : '-'}</td>
+                <td>{request.reviewNote || '-'}</td>
               </tr>
             ))}
           </Table>

@@ -23,6 +23,7 @@ router.get('/auth/me', auth.me);
 router.get('/users', adminOnly, users.listUsers);
 router.put('/users/me', users.updateMe);
 router.get('/users/suppliers', authorize('admin', 'warehouseManager', 'supplier', 'salesRepresentative'), users.listSuppliers);
+router.get('/users/suppliers/summary', adminOnly, users.listSupplierSummaries);
 router.get('/users/:id', users.getUser);
 router.put('/users/:id', adminOnly, users.updateUser);
 router.delete('/users/:id', adminOnly, users.deleteUser);

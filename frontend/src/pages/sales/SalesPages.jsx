@@ -79,8 +79,29 @@ function OrderForm({ products, warehouses, stock, presetProduct, onClose, onDone
   const [customerPhone, setCustomerPhone] = useState('');
   const [lines, setLines] = useState([{ productId: presetProduct || products[0]?._id || '', quantity: 1 }]);
   const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState(false);
 
-  const stockFor = (productId) => stock.find((row) => row.product?._id === productId && row.warehouse?._id === warehouseId)?.quantity || 0;
+  const warehouse = warehouses.find((item) => item._id === warehouseId);
+  const availableFor = (productId) =>
+    stock.find((row) => row.product?._id === productId && row.warehouse?._id === warehouseId)?.quantity || 0;
+
+  const lineError = (line) => {
+    if (!line.productId) return 'Product is required.';
+    const quantity = Number(line.quantity);
+    if (!Number.isInteger(quantity) || quantity <= 0) return 'Quantity must be a whole number greater than 0.';
+    const available = availableFor(line.productId);
+    if (quantity > available) {
+      const name = products.find((item) => item._id === line.productId)?.name || 'this product';
+      return `Only ${available} units of ${name} are available in ${warehouse?.name || 'this warehouse'}, but you requested ${quantity}.`;
+    }
+    return '';
+  };
+
+  const errors = lines.map(lineError);
+  const hasLineErrors = errors.some(Boolean);
+  const customerError = customerName.trim() ? '' : 'Customer name is required.';
+  const canSubmit = Boolean(warehouseId) && !customerError && lines.length > 0 && !hasLineErrors && !busy;
+
   const total = lines.reduce((sum, line) => {
     const product = products.find((item) => item._id === line.productId);
     return sum + (product?.price || 0) * (Number(line.quantity) || 0);
@@ -90,9 +111,16 @@ function OrderForm({ products, warehouses, stock, presetProduct, onClose, onDone
 
   const submit = async (event) => {
     event.preventDefault();
+    setTouched(true);
+    if (!canSubmit) return;
     setBusy(true);
     try {
-      const response = await api.post('/orders', { customerName, customerPhone, warehouseId, items: lines });
+      const response = await api.post('/orders', {
+        customerName: customerName.trim(),
+        customerPhone,
+        warehouseId,
+        items: lines.map((line) => ({ productId: line.productId, quantity: Number(line.quantity) })),
+      });
       toast.success(`Order ${response.data.data.orderNumber} created`);
       onDone();
     } catch (err) {
@@ -104,23 +132,31 @@ function OrderForm({ products, warehouses, stock, presetProduct, onClose, onDone
 
   return (
     <form onSubmit={submit} className="stack-form">
-      <Field label="Warehouse" required>
+      <Field label="Warehouse" required hint="Available stock is checked in this warehouse only">
         <select required value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-          {warehouses.map((warehouse) => <option key={warehouse._id} value={warehouse._id}>{warehouse.name}</option>)}
+          <option value="">Select warehouse</option>
+          {warehouses.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}
         </select>
+        {touched && !warehouseId && <small className="field-error">Warehouse is required.</small>}
       </Field>
-      <Field label="Customer name" required><input required value={customerName} onChange={(e) => setCustomerName(e.target.value)} /></Field>
+      <Field label="Customer name" required>
+        <input required value={customerName} onBlur={() => setTouched(true)} onChange={(e) => setCustomerName(e.target.value)} />
+        {touched && customerError && <small className="field-error">{customerError}</small>}
+      </Field>
       <Field label="Customer phone"><input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} /></Field>
       <div className="line-items">
         <div className="line-head"><span>Product</span><span>Qty</span><span>Available</span><span /></div>
         {lines.map((line, index) => (
-          <div className="line-row" key={index}>
-            <select required value={line.productId} onChange={(e) => updateLine(index, { productId: e.target.value })}>
-              {products.map((product) => <option key={product._id} value={product._id}>{product.name} — {money(product.price)}</option>)}
-            </select>
-            <input required type="number" min="1" value={line.quantity} onChange={(e) => updateLine(index, { quantity: e.target.value })} />
-            <span>{stockFor(line.productId)}</span>
-            <button type="button" className="icon-btn" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, i) => i !== index))}>×</button>
+          <div className="line-block" key={index}>
+            <div className="line-row">
+              <select required value={line.productId} onChange={(e) => updateLine(index, { productId: e.target.value })}>
+                {products.map((product) => <option key={product._id} value={product._id}>{product.name} — {money(product.price)}</option>)}
+              </select>
+              <input required type="number" min="1" value={line.quantity} onChange={(e) => updateLine(index, { quantity: e.target.value })} />
+              <span>{availableFor(line.productId)}</span>
+              <button type="button" className="icon-btn" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, i) => i !== index))}>×</button>
+            </div>
+            {errors[index] && <small className="line-error">{errors[index]}</small>}
           </div>
         ))}
         <button type="button" className="btn small" onClick={() => setLines([...lines, { productId: products[0]?._id || '', quantity: 1 }])}>+ Add product</button>
@@ -128,7 +164,7 @@ function OrderForm({ products, warehouses, stock, presetProduct, onClose, onDone
       <div className="total-row"><span>Estimated total</span><strong>{money(total)}</strong></div>
       <div className="form-actions">
         <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-        <button type="submit" className="btn primary" disabled={busy || !products.length || !warehouses.length}>
+        <button type="submit" className="btn primary" disabled={!canSubmit || !products.length || !warehouses.length}>
           {busy ? 'Creating...' : 'Create order'}
         </button>
       </div>
@@ -251,11 +287,12 @@ export function SalesOrders() {
         <button className="btn" onClick={reload}>Refresh</button>
       </Toolbar>
       <section className="panel">
-        <Table head={['Order', 'Customer', 'Items', 'Total', 'Status', 'Created', '']} empty={!rows.length}>
+        <Table head={['Order', 'Customer', 'Warehouse', 'Items', 'Total', 'Status', 'Created', '']} empty={!rows.length}>
           {rows.map((order) => (
             <tr key={order._id}>
               <td><strong>{order.orderNumber}</strong></td>
               <td>{order.customerName}</td>
+              <td>{order.warehouse?.name || '-'}</td>
               <td>{order.products.length}</td>
               <td><Amount value={order.totalAmount} /></td>
               <td><Badge status={order.status} /></td>
@@ -277,7 +314,7 @@ export function SalesOrders() {
           <>
             <div className="detail-grid">
               <div><small>Customer</small><strong>{selected.customerName}</strong><span>{selected.customerPhone}</span></div>
-              <div><small>Warehouse</small><strong>{selected.warehouse?.name}</strong></div>
+              <div><small>Warehouse</small><strong>{selected.warehouse?.name || '-'}</strong><span>{selected.warehouse?.location || ''}</span></div>
               <div><small>Status</small><Badge status={selected.status} /></div>
               <div><small>Created</small><strong>{formatDate(selected.createdAt)}</strong></div>
             </div>

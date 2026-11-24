@@ -7,6 +7,8 @@ import { asyncHandler, fail, isObjectId, ok, priceValue } from '../utils/http.js
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const canWriteProducts = (user) => ['admin', 'warehouseManager'].includes(user?.role);
+
 const resolveImage = (body, existing = {}) => {
   const hasUrl = Object.prototype.hasOwnProperty.call(body, 'imageUrl');
   const hasId = Object.prototype.hasOwnProperty.call(body, 'imageFileId');
@@ -82,18 +84,22 @@ export const createProduct = asyncHandler(async (req, res) => {
   const price = priceValue(req.body.price);
   const lowStockLimit = Number(req.body.lowStockLimit ?? 5);
 
-  if (!name || !sku) return fail(res, 400, 'Name and SKU are required');
-  if (price === null) return fail(res, 400, 'A valid price is required');
-  if (!Number.isInteger(lowStockLimit) || lowStockLimit < 0) {
-    return fail(res, 400, 'lowStockLimit must be a non-negative integer');
+  if (!canWriteProducts(req.user)) {
+    return fail(res, 403, 'Only admins and warehouse managers can create products.');
   }
-  if (await Product.exists({ sku })) return fail(res, 409, 'SKU already exists');
+  if (!name) return fail(res, 400, 'Name is required.');
+  if (!sku) return fail(res, 400, 'SKU is required.');
+  if (price === null) return fail(res, 400, 'Price is required and must be a non-negative number.');
+  if (!Number.isInteger(lowStockLimit) || lowStockLimit < 0) {
+    return fail(res, 400, 'Low stock limit must be a whole number of 0 or greater.');
+  }
+  if (await Product.exists({ sku })) return fail(res, 409, `A product with SKU "${sku}" already exists.`);
 
   let supplier = null;
   if (req.body.supplier) {
-    if (!isObjectId(req.body.supplier)) return fail(res, 400, 'Invalid supplier');
+    if (!isObjectId(req.body.supplier)) return fail(res, 400, 'Supplier must be a valid supplier id.');
     const found = await User.findOne({ _id: req.body.supplier, role: 'supplier' });
-    if (!found) return fail(res, 400, 'Supplier not found');
+    if (!found) return fail(res, 404, `Supplier "${req.body.supplier}" does not exist.`);
     supplier = found._id;
   }
 
@@ -120,33 +126,40 @@ export const createProduct = asyncHandler(async (req, res) => {
 });
 
 export const updateProduct = asyncHandler(async (req, res) => {
+  if (!canWriteProducts(req.user)) {
+    return fail(res, 403, 'Only admins and warehouse managers can edit products.');
+  }
   const product = await Product.findById(req.params.id);
-  if (!product) return fail(res, 404, 'Product not found');
+  if (!product) return fail(res, 404, `Product "${req.params.id}" does not exist.`);
 
   if (req.body.name !== undefined) product.name = String(req.body.name).trim();
   if (req.body.description !== undefined) product.description = String(req.body.description);
   if (req.body.category !== undefined) product.category = String(req.body.category).trim() || 'General';
   if (req.body.price !== undefined) {
     const price = priceValue(req.body.price);
-    if (price === null) return fail(res, 400, 'Invalid price');
+    if (price === null) return fail(res, 400, 'Price must be a non-negative number.');
     product.price = price;
   }
   if (req.body.lowStockLimit !== undefined) {
     const limit = Number(req.body.lowStockLimit);
-    if (!Number.isInteger(limit) || limit < 0) return fail(res, 400, 'Invalid lowStockLimit');
+    if (!Number.isInteger(limit) || limit < 0) {
+      return fail(res, 400, 'Low stock limit must be a whole number of 0 or greater.');
+    }
     product.lowStockLimit = limit;
   }
   if (req.body.sku !== undefined) {
     const sku = String(req.body.sku).trim().toUpperCase();
-    if (!sku) return fail(res, 400, 'SKU cannot be empty');
-    if (await Product.exists({ sku, _id: { $ne: product._id } })) return fail(res, 409, 'SKU already exists');
+    if (!sku) return fail(res, 400, 'SKU is required.');
+    if (await Product.exists({ sku, _id: { $ne: product._id } })) {
+      return fail(res, 409, `A product with SKU "${sku}" already exists.`);
+    }
     product.sku = sku;
   }
   if (req.body.supplier !== undefined) {
     if (req.body.supplier) {
-      if (!isObjectId(req.body.supplier)) return fail(res, 400, 'Invalid supplier');
+      if (!isObjectId(req.body.supplier)) return fail(res, 400, 'Supplier must be a valid supplier id.');
       const found = await User.findOne({ _id: req.body.supplier, role: 'supplier' });
-      if (!found) return fail(res, 400, 'Supplier not found');
+      if (!found) return fail(res, 404, `Supplier "${req.body.supplier}" does not exist.`);
       product.supplier = found._id;
     } else {
       product.supplier = null;
@@ -167,8 +180,11 @@ export const updateProduct = asyncHandler(async (req, res) => {
 });
 
 export const deleteProduct = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return fail(res, 403, 'Only admins can delete products.');
+  }
   const product = await Product.findById(req.params.id);
-  if (!product) return fail(res, 404, 'Product not found');
+  if (!product) return fail(res, 404, `Product "${req.params.id}" does not exist.`);
   await Stock.deleteMany({ product: product._id });
   await deleteImageKitFile(product.imageFileId);
   await product.deleteOne();

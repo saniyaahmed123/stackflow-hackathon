@@ -1,0 +1,28 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  --color-pp-navy: #0B1A2F;
+  --color-pp-cream: #FEFBF4;
+  --color-pp-amber: #E9B44B;
+  --color-pp-cream-deep: #F3EBD8;
+  --color-pp-amber-deep: #C98F1C;
+  --color-pp-line: rgba(11, 26, 47, 0.18);
+  --color-pp-green: #2F6B4F;
+  --color-pp-red: #A63D2F;
+
+  --font-heading: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+.pp-home *,
+.pp-home *::before,
+.pp-home *::after {
+  box-sizing: border-box;
+}

@@ -3,27 +3,31 @@ import { Warehouse } from '../models/Warehouse.js';
 import { Stock } from '../models/Stock.js';
 import { StockTransaction } from '../models/StockTransaction.js';
 import { assignedWarehouseIds, canManageWarehouse } from '../middleware/auth.js';
-import { asyncHandler, fail, isObjectId, ok, positiveInt } from '../utils/http.js';
+import {
+  asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt, stockShortfallMessage,
+} from '../utils/http.js';
 
 const resolveReferences = async (productId, warehouseId) => {
   if (!isObjectId(productId) || !isObjectId(warehouseId)) {
-    return { error: 'A valid product and warehouse are required' };
+    return { error: 'Product and Warehouse must be valid ids.' };
   }
   const [product, warehouse] = await Promise.all([
     Product.findById(productId),
     Warehouse.findById(warehouseId),
   ]);
-  if (!product) return { error: 'Product not found' };
-  if (!warehouse) return { error: 'Warehouse not found' };
+  if (!product) return { error: `Product "${productId}" does not exist.` };
+  if (!warehouse) return { error: `Warehouse "${warehouseId}" does not exist.` };
   return { product, warehouse };
 };
 
 export const stockIn = asyncHandler(async (req, res) => {
   const quantity = positiveInt(req.body.quantity);
-  if (!quantity) return fail(res, 400, 'Quantity must be a positive whole number');
+  if (!quantity) return fail(res, 400, INVALID_QUANTITY);
+  if (!req.body.warehouseId) return fail(res, 400, 'Warehouse is required.');
   if (!canManageWarehouse(req.user, req.body.warehouseId)) {
-    return fail(res, 403, 'You can only manage stock in warehouses assigned to you');
+    return fail(res, 403, 'You are not assigned to this warehouse.');
   }
+  if (!req.body.productId) return fail(res, 400, 'Product is required.');
   const refs = await resolveReferences(req.body.productId, req.body.warehouseId);
   if (refs.error) return fail(res, 400, refs.error);
 
@@ -46,10 +50,12 @@ export const stockIn = asyncHandler(async (req, res) => {
 
 export const stockOut = asyncHandler(async (req, res) => {
   const quantity = positiveInt(req.body.quantity);
-  if (!quantity) return fail(res, 400, 'Quantity must be a positive whole number');
+  if (!quantity) return fail(res, 400, INVALID_QUANTITY);
+  if (!req.body.warehouseId) return fail(res, 400, 'Warehouse is required.');
   if (!canManageWarehouse(req.user, req.body.warehouseId)) {
-    return fail(res, 403, 'You can only manage stock in warehouses assigned to you');
+    return fail(res, 403, 'You are not assigned to this warehouse.');
   }
+  if (!req.body.productId) return fail(res, 400, 'Product is required.');
   const refs = await resolveReferences(req.body.productId, req.body.warehouseId);
   if (refs.error) return fail(res, 400, refs.error);
 
@@ -60,7 +66,12 @@ export const stockOut = asyncHandler(async (req, res) => {
   );
   if (!stock) {
     const current = await Stock.findOne({ product: refs.product._id, warehouse: refs.warehouse._id });
-    return fail(res, 400, `Insufficient stock. Available: ${current?.quantity || 0}`);
+    return fail(res, 400, stockShortfallMessage({
+      productName: refs.product.name,
+      available: current?.quantity || 0,
+      requested: quantity,
+      warehouseName: refs.warehouse.name,
+    }));
   }
   const transaction = await StockTransaction.create({
     product: refs.product._id,

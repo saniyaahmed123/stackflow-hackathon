@@ -23,3 +23,8 @@ export const priceValue = (value) => {
 };
 
 export const isObjectId = (value) => /^[a-f\d]{24}$/i.test(String(value || ''));
+
+export const INVALID_QUANTITY = 'Quantity must be a whole number greater than 0';
+
+export const stockShortfallMessage = ({ productName, available, requested, warehouseName }) =>
+  `Only ${available} units of ${productName} are available in ${warehouseName}, but you requested ${requested}.`;

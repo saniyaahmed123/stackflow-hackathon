@@ -25,14 +25,15 @@ export const createWarehouse = asyncHandler(async (req, res) => {
   const name = String(req.body.name || '').trim();
   const location = String(req.body.location || '').trim();
   const capacity = req.body.capacity === undefined || req.body.capacity === '' ? 0 : nonNegativeInt(req.body.capacity);
-  if (!name || !location) return fail(res, 400, 'Name and location are required');
-  if (capacity === null) return fail(res, 400, 'Capacity must be a non-negative number');
-  if (await Warehouse.exists({ name })) return fail(res, 409, 'Warehouse name already exists');
+  if (!name) return fail(res, 400, 'Warehouse name is required.');
+  if (!location) return fail(res, 400, 'Warehouse location is required.');
+  if (capacity === null) return fail(res, 400, 'Capacity must be a whole number of 0 or greater.');
+  if (await Warehouse.exists({ name })) return fail(res, 409, `A warehouse named "${name}" already exists.`);
 
   let manager = null;
   if (req.body.manager) {
     const found = await User.findOne({ _id: req.body.manager, role: 'warehouseManager' });
-    if (!found) return fail(res, 400, 'Manager must be an existing warehouseManager');
+    if (!found) return fail(res, 404, `Manager "${req.body.manager}" does not exist or is not a warehouse manager.`);
     manager = found._id;
   }
 
@@ -48,7 +49,7 @@ export const updateWarehouse = asyncHandler(async (req, res) => {
   if (req.body.name !== undefined) {
     const name = String(req.body.name).trim();
     if (!name) return fail(res, 400, 'Name is required');
-    if (await Warehouse.exists({ name, _id: { $ne: warehouse._id } })) return fail(res, 409, 'Name already exists');
+    if (await Warehouse.exists({ name, _id: { $ne: warehouse._id } })) return fail(res, 409, `A warehouse named "${name}" already exists.`);
     warehouse.name = name;
   }
   if (req.body.location !== undefined) warehouse.location = String(req.body.location).trim();
@@ -61,7 +62,7 @@ export const updateWarehouse = asyncHandler(async (req, res) => {
     const previous = warehouse.manager;
     if (req.body.manager) {
       const found = await User.findOne({ _id: req.body.manager, role: 'warehouseManager' });
-      if (!found) return fail(res, 400, 'Manager must be an existing warehouseManager');
+      if (!found) return fail(res, 404, `Manager "${req.body.manager}" does not exist or is not a warehouse manager.`);
       warehouse.manager = found._id;
       await User.findByIdAndUpdate(found._id, { $addToSet: { assignedWarehouses: warehouse._id } });
     } else {
@@ -79,8 +80,10 @@ export const updateWarehouse = asyncHandler(async (req, res) => {
 export const deleteWarehouse = asyncHandler(async (req, res) => {
   const warehouse = await Warehouse.findById(req.params.id);
   if (!warehouse) return fail(res, 404, 'Warehouse not found');
-  const stock = await Stock.findOne({ warehouse: warehouse._id, quantity: { $gt: 0 } });
-  if (stock) return fail(res, 400, 'Cannot delete a warehouse that still holds stock');
+  const stock = await Stock.findOne({ warehouse: warehouse._id, quantity: { $gt: 0 } }).populate('product', 'name');
+  if (stock) {
+    return fail(res, 400, `Cannot delete "${warehouse.name}" because it still holds ${stock.quantity} units of ${stock.product?.name || 'a product'}. Move or remove that stock first.`);
+  }
   await Stock.deleteMany({ warehouse: warehouse._id });
   await User.updateMany({ assignedWarehouses: warehouse._id }, { $pull: { assignedWarehouses: warehouse._id } });
   await warehouse.deleteOne();

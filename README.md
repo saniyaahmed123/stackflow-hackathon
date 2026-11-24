@@ -1,4 +1,4 @@
-# StockFlow — Inventory & Warehouse Management (MERN)
+# Parcel Point — Inventory & Warehouse Management (MERN)
 
 Role-based inventory system with stock in/out, atomic order processing, ImageKit uploads, and low-stock alerts.
 
@@ -17,7 +17,7 @@ MongoDB/Mongoose · Express · React (Vite) · Node · JWT + bcrypt · ImageKit
 
    ```env
    PORT=5000
-   MONGO_URI=mongodb://127.0.0.1:27017/stockflow
+   MONGO_URI=mongodb://127.0.0.1:27017/parcelpoint
    JWT_SECRET=<long random string>
    JWT_EXPIRES=7d
    IMAGEKIT_PUBLIC_KEY=<public key>
@@ -48,12 +48,12 @@ MongoDB/Mongoose · Express · React (Vite) · Node · JWT + bcrypt · ImageKit
 
 | Role | Email | Password |
 | --- | --- | --- |
-| admin | admin@stockflow.pk | admin123 |
-| warehouseManager (Main Warehouse) | manager@stockflow.pk | manager123 |
-| warehouseManager (Lahore Branch) | manager2@stockflow.pk | manager2123 |
-| supplier | supplier@stockflow.pk | supplier123 |
-| supplier | supplier2@stockflow.pk | supplier2123 |
-| salesRepresentative | sales@stockflow.pk | sales123 |
+| admin | admin@parcelpoint.pk | admin123 |
+| warehouseManager (Main Warehouse) | manager@parcelpoint.pk | manager123 |
+| warehouseManager (Lahore Branch) | manager2@parcelpoint.pk | manager2123 |
+| supplier | supplier@parcelpoint.pk | supplier123 |
+| supplier | supplier2@parcelpoint.pk | supplier2123 |
+| salesRepresentative | sales@parcelpoint.pk | sales123 |
 
 Public registration can create supplier, warehouseManager, or salesRepresentative accounts — **never admin**. Only an admin can create/promote admins.
 
@@ -100,7 +100,7 @@ The repo includes `vercel.json`: Vite builds `frontend/dist`, and `/api/*` rewri
 
 1. Push the repo to GitHub, then **Import Project** in Vercel. No framework preset is needed; `vercel.json` supplies the build command and output directory. In Atlas **Network Access**, allow `0.0.0.0/0` (or Vercel's egress IPs), otherwise serverless calls cannot reach MongoDB.
 2. Add these Environment Variables in the Vercel project (Production and Preview):
-   - `MONGO_URI` — your Atlas connection string (with a database name, e.g. `.../stockflow`)
+   - `MONGO_URI` — your Atlas connection string (with a database name, e.g. `.../parcelpoint`)
    - `JWT_SECRET` — a long random secret
    - `JWT_EXPIRES` — e.g. `7d`
    - `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, `IMAGEKIT_URL_ENDPOINT`

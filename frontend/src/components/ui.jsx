@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { money } from '../api';
 
 const ToastContext = createContext(null);
@@ -53,14 +54,17 @@ export function PageHeader({ title, subtitle, action }) {
   );
 }
 
-export function StatCard({ label, value, hint, tone = 'primary' }) {
-  return (
-    <div className={`stat-card ${tone}`}>
+export function StatCard({ label, value, hint, tone = 'primary', to }) {
+  const content = (
+    <>
       <span className="stat-label">{label}</span>
       <strong>{value}</strong>
       {hint && <small>{hint}</small>}
-    </div>
+    </>
   );
+  return to
+    ? <Link to={to} className={`stat-card ${tone} link`}>{content}</Link>
+    : <div className={`stat-card ${tone}`}>{content}</div>;
 }
 
 const badgeTone = {

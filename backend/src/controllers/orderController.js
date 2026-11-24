@@ -6,7 +6,9 @@ import { StockTransaction } from '../models/StockTransaction.js';
 import { Warehouse } from '../models/Warehouse.js';
 import { assignedWarehouseIds, canManageWarehouse } from '../middleware/auth.js';
 import { withTransaction } from '../utils/transaction.js';
-import { asyncHandler, fail, isObjectId, ok, positiveInt } from '../utils/http.js';
+import {
+  asyncHandler, fail, INVALID_QUANTITY, isObjectId, ok, positiveInt, stockShortfallMessage,
+} from '../utils/http.js';
 
 const populateOrder = (query) =>
   query
@@ -19,37 +21,47 @@ const newOrderNumber = () =>
 
 export const createOrder = asyncHandler(async (req, res) => {
   const customerName = String(req.body.customerName || '').trim();
-  if (!customerName) return fail(res, 400, 'Customer name is required');
-  if (!isObjectId(req.body.warehouseId)) return fail(res, 400, 'A valid warehouse is required');
+  if (!customerName) return fail(res, 400, 'Customer name is required.');
+  if (!req.body.warehouseId) return fail(res, 400, 'Warehouse is required.');
+  if (!isObjectId(req.body.warehouseId)) return fail(res, 400, 'Warehouse must be a valid warehouse id.');
   if (!Array.isArray(req.body.items) || req.body.items.length === 0) {
-    return fail(res, 400, 'At least one product is required');
+    return fail(res, 400, 'At least one product is required.');
   }
 
   const quantities = new Map();
   for (const item of req.body.items) {
     const quantity = positiveInt(item.quantity);
-    if (!quantity || !isObjectId(item.productId)) {
-      return fail(res, 400, 'Each item needs a valid product and a positive quantity');
-    }
+    if (!quantity) return fail(res, 400, INVALID_QUANTITY);
+    if (!isObjectId(item.productId)) return fail(res, 400, 'Product is required and must be a valid product id.');
     quantities.set(String(item.productId), (quantities.get(String(item.productId)) || 0) + quantity);
   }
 
   const warehouse = await Warehouse.findById(req.body.warehouseId);
-  if (!warehouse) return fail(res, 404, 'Warehouse not found');
+  if (!warehouse) return fail(res, 404, `Warehouse "${req.body.warehouseId}" does not exist.`);
 
   const ids = [...quantities.keys()];
   const products = await Product.find({ _id: { $in: ids } });
-  if (products.length !== ids.length) return fail(res, 400, 'One or more products do not exist');
   const productMap = new Map(products.map((product) => [String(product._id), product]));
+  if (products.length !== ids.length) {
+    const missing = ids.filter((id) => !productMap.has(id));
+    return fail(res, 400, `Product not found: ${missing.join(', ')}.`);
+  }
 
   const stocks = await Stock.find({ warehouse: warehouse._id, product: { $in: ids } }).lean();
   const stockMap = new Map(stocks.map((stock) => [String(stock.product), stock.quantity]));
+  const shortfalls = [];
   for (const [id, quantity] of quantities) {
     const available = stockMap.get(id) || 0;
     if (available < quantity) {
-      return fail(res, 400, `Insufficient stock for ${productMap.get(id).name}: available ${available}, requested ${quantity}`);
+      shortfalls.push(stockShortfallMessage({
+        productName: productMap.get(id).name,
+        available,
+        requested: quantity,
+        warehouseName: warehouse.name,
+      }));
     }
   }
+  if (shortfalls.length) return fail(res, 400, `Insufficient stock: ${shortfalls.join(' ')}`);
 
   const lines = [...quantities].map(([id, quantity]) => ({
     product: id,
@@ -92,12 +104,16 @@ export const listOrders = asyncHandler(async (req, res) => {
 
 export const getOrder = asyncHandler(async (req, res) => {
   const order = await populateOrder(Order.findById(req.params.id));
-  if (!order) return fail(res, 404, 'Order not found');
+  if (!order) return fail(res, 404, `Order "${req.params.id}" does not exist.`);
   const allowed =
     req.user.role === 'admin' ||
     String(order.createdBy?._id || order.createdBy) === String(req.user._id) ||
     (req.user.role === 'warehouseManager' && canManageWarehouse(req.user, order.warehouse?._id || order.warehouse));
-  if (!allowed) return fail(res, 403, 'You are not allowed to view this order');
+  if (!allowed) {
+    return fail(res, 403, req.user.role === 'warehouseManager'
+      ? 'You are not assigned to this warehouse.'
+      : 'You can only view orders you created.');
+  }
   return ok(res, order);
 });
 
@@ -106,6 +122,7 @@ async function deductOrderStock(order, session, rollbacks) {
   const products = await Product.find({ _id: { $in: ids } }).select('name sku');
   const names = new Map(products.map((product) => [String(product._id), product.name]));
   const warehouseId = order.warehouse?._id || order.warehouse;
+  const warehouseName = order.warehouse?.name || 'this warehouse';
   const options = session ? { session } : {};
 
   for (const line of order.products) {
@@ -117,9 +134,12 @@ async function deductOrderStock(order, session, rollbacks) {
     );
     if (!stock) {
       const current = await Stock.findOne({ product: productId, warehouse: warehouseId }, null, options);
-      throw new Error(
-        `Insufficient stock for ${names.get(String(productId)) || 'a product'}. Available: ${current?.quantity || 0}`
-      );
+      throw new Error(stockShortfallMessage({
+        productName: names.get(String(productId)) || 'Product',
+        available: current?.quantity || 0,
+        requested: line.quantity,
+        warehouseName,
+      }));
     }
 
     const txData = {
@@ -150,16 +170,22 @@ export const updateStatus = asyncHandler(async (req, res) => {
     return fail(res, 400, 'Status must be Processing or Completed. Use cancel for Cancelled.');
   }
   let order = await populateOrder(Order.findById(req.params.id));
-  if (!order) return fail(res, 404, 'Order not found');
+  if (!order) return fail(res, 404, `Order "${req.params.id}" does not exist.`);
+  if (!order.warehouse) {
+    return fail(res, 400, 'This order has no warehouse assigned and cannot be processed.');
+  }
   if (!canManageWarehouse(req.user, order.warehouse?._id || order.warehouse)) {
-    return fail(res, 403, 'You can only manage orders for your assigned warehouses');
+    return fail(res, 403, 'You are not assigned to this warehouse.');
   }
-  if (['Cancelled', 'Completed'].includes(order.status)) {
-    return fail(res, 400, `${order.status} orders cannot be processed again`);
+  if (order.status === 'Cancelled') {
+    return fail(res, 400, 'Cancelled orders cannot be processed again.');
   }
-  if (order.status === status) return fail(res, 400, `Order is already ${status}`);
+  if (order.status === 'Completed') {
+    return fail(res, 400, 'Completed orders cannot be processed again.');
+  }
+  if (order.status === status) return fail(res, 400, `Order is already ${status}.`);
   if (status === 'Processing' && order.status !== 'Pending') {
-    return fail(res, 400, 'Only Pending orders can move to Processing');
+    return fail(res, 400, `Only Pending orders can move to Processing. This order is ${order.status}.`);
   }
 
   try {
@@ -182,12 +208,12 @@ export const updateStatus = asyncHandler(async (req, res) => {
 
 export const cancelOrder = asyncHandler(async (req, res) => {
   const order = await populateOrder(Order.findById(req.params.id));
-  if (!order) return fail(res, 404, 'Order not found');
+  if (!order) return fail(res, 404, `Order "${req.params.id}" does not exist.`);
   if (req.user.role === 'salesRepresentative' && String(order.createdBy?._id || order.createdBy) !== String(req.user._id)) {
-    return fail(res, 403, 'You can only cancel your own orders');
+    return fail(res, 403, 'You can only cancel orders you created.');
   }
   if (order.status !== 'Pending') {
-    return fail(res, 400, 'Only Pending orders can be cancelled');
+    return fail(res, 400, `Only Pending orders can be cancelled. This order is ${order.status}.`);
   }
   order.status = 'Cancelled';
   order.cancelledAt = new Date();

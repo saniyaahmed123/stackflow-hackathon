@@ -4,6 +4,13 @@ import api from '../api';
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
+export const ROLE_HOME = {
+  admin: '/admin',
+  warehouseManager: '/manager',
+  supplier: '/supplier',
+  salesRepresentative: '/sales',
+};
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);

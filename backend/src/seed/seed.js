@@ -37,12 +37,12 @@ const run = async () => {
     hash('sales123'),
   ]);
 
-  const admin = await User.create({ name: 'Ayesha Admin', email: 'admin@stockflow.pk', password: adminHash, phone: '0300-1111111', role: 'admin' });
-  const manager = await User.create({ name: 'Bilal Manager', email: 'manager@stockflow.pk', password: managerHash, phone: '0300-2222222', role: 'warehouseManager' });
-  const manager2 = await User.create({ name: 'Sana Manager', email: 'manager2@stockflow.pk', password: manager2Hash, phone: '0300-2222223', role: 'warehouseManager' });
-  const supplier = await User.create({ name: 'Tech Supplies Co.', email: 'supplier@stockflow.pk', password: supplierHash, phone: '0300-3333333', role: 'supplier', image: swatch('TS', '#2563eb') });
-  const supplier2 = await User.create({ name: 'Office Mart', email: 'supplier2@stockflow.pk', password: supplier2Hash, phone: '0300-3333334', role: 'supplier', image: swatch('OM', '#7c3aed') });
-  const sales = await User.create({ name: 'Omar Sales', email: 'sales@stockflow.pk', password: salesHash, phone: '0300-4444444', role: 'salesRepresentative' });
+  const admin = await User.create({ name: 'Ayesha Admin', email: 'admin@parcelpoint.pk', password: adminHash, phone: '0300-1111111', role: 'admin' });
+  const manager = await User.create({ name: 'Bilal Manager', email: 'manager@parcelpoint.pk', password: managerHash, phone: '0300-2222222', role: 'warehouseManager' });
+  const manager2 = await User.create({ name: 'Sana Manager', email: 'manager2@parcelpoint.pk', password: manager2Hash, phone: '0300-2222223', role: 'warehouseManager' });
+  const supplier = await User.create({ name: 'Tech Supplies Co.', email: 'supplier@parcelpoint.pk', password: supplierHash, phone: '0300-3333333', role: 'supplier', image: swatch('TS', '#2563eb') });
+  const supplier2 = await User.create({ name: 'Office Mart', email: 'supplier2@parcelpoint.pk', password: supplier2Hash, phone: '0300-3333334', role: 'supplier', image: swatch('OM', '#7c3aed') });
+  const sales = await User.create({ name: 'Omar Sales', email: 'sales@parcelpoint.pk', password: salesHash, phone: '0300-4444444', role: 'salesRepresentative' });
 
   const main = await Warehouse.create({ name: 'Main Warehouse', location: 'Karachi', manager: manager._id, capacity: 10000 });
   const branch = await Warehouse.create({ name: 'Lahore Branch', location: 'Lahore', manager: manager2._id, capacity: 5000 });
@@ -85,12 +85,12 @@ const run = async () => {
   ]);
 
   console.log('\nSeed complete. Test credentials (password shown):');
-  console.log('  admin@stockflow.pk / admin123');
-  console.log('  manager@stockflow.pk / manager123   (Main Warehouse)');
-  console.log('  manager2@stockflow.pk / manager2123 (Lahore Branch)');
-  console.log('  supplier@stockflow.pk / supplier123');
-  console.log('  sales@stockflow.pk / sales123');
-  console.log('  supplier2@stockflow.pk / supplier2123\n');
+  console.log('  admin@parcelpoint.pk / admin123');
+  console.log('  manager@parcelpoint.pk / manager123   (Main Warehouse)');
+  console.log('  manager2@parcelpoint.pk / manager2123 (Lahore Branch)');
+  console.log('  supplier@parcelpoint.pk / supplier123');
+  console.log('  sales@parcelpoint.pk / sales123');
+  console.log('  supplier2@parcelpoint.pk / supplier2123\n');
 
   await disconnectDB();
   process.exit(0);

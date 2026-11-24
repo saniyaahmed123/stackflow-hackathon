@@ -1,11 +1,15 @@
 import "dotenv/config";
 
+const jwtSecret = process.env.JWT_SECRET;
+
+if (process.env.NODE_ENV === "production" && !jwtSecret) {
+  throw new Error("JWT_SECRET must be set in production");
+}
+
 export const config = {
   port: Number(process.env.PORT) || 5000,
   mongoUri: process.env.MONGO_URI || "",
-  jwtSecret:
-    process.env.JWT_SECRET ||
-    "e099df468facf5dd71d1b5a3d6f0b5ad573e2de5837e152b0f9596258f163667",
+  jwtSecret: jwtSecret || "dev-only-jwt-secret-change-me",
   jwtExpires: process.env.JWT_EXPIRES || "7d",
   clientUrl: process.env.CLIENT_URL || "http://localhost:5173",
   imagekit: {

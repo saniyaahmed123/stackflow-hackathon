@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import api, { apiError, formatDate } from '../../api';
 import { Badge, Empty, Field, Loading, PageHeader, StatCard, Table, Toolbar, useToast } from '../../components/ui';
-import { AdminLowStock, AdminTransactions } from '../admin/AdminPages';
+import { AdminLowStock, AdminTransactions, ManagerProducts } from '../admin/AdminPages';
 
-export { AdminLowStock as ManagerLowStock, AdminTransactions as ManagerTransactions };
+export { AdminLowStock as ManagerLowStock, AdminTransactions as ManagerTransactions, ManagerProducts };
 
 const useLoad = (loader, deps = []) => {
   const [data, setData] = useState(null);
@@ -132,11 +132,18 @@ export function ManagerStockMovement() {
   const [form, setForm] = useState({ warehouseId: '', productId: '', quantity: 1, note: '' });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [touched, setTouched] = useState(false);
+
+  const quantityError = Number.isInteger(Number(form.quantity)) && Number(form.quantity) > 0
+    ? '' : 'Quantity must be a whole number greater than 0.';
+  const canSubmit = Boolean(form.warehouseId) && Boolean(form.productId) && !quantityError && !busy;
 
   if (!data) return error ? <Empty message={error} /> : <Loading />;
 
   const submit = async (event) => {
     event.preventDefault();
+    setTouched(true);
+    if (!canSubmit) return;
     setBusy(true);
     setResult(null);
     try {
@@ -167,16 +174,21 @@ export function ManagerStockMovement() {
                 <option value="">Select warehouse</option>
                 {data.warehouses.map((warehouse) => <option key={warehouse._id} value={warehouse._id}>{warehouse.name}</option>)}
               </select>
+              {touched && !form.warehouseId && <small className="field-error">Warehouse is required.</small>}
             </Field>
             <Field label="Product" required>
               <select required value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}>
                 <option value="">Select product</option>
                 {data.products.map((product) => <option key={product._id} value={product._id}>{product.name} ({product.sku})</option>)}
               </select>
+              {touched && !form.productId && <small className="field-error">Product is required.</small>}
             </Field>
-            <Field label="Quantity" required><input required type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} /></Field>
+            <Field label="Quantity" required>
+              <input required type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+              {touched && quantityError && <small className="field-error">{quantityError}</small>}
+            </Field>
             <Field label="Note"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="e.g. New shipment" /></Field>
-            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving...' : `Record ${type === 'stock-in' ? 'stock in' : 'stock out'}`}</button>
+            <button type="submit" className="btn primary" disabled={!canSubmit}>{busy ? 'Saving...' : `Record ${type === 'stock-in' ? 'stock in' : 'stock out'}`}</button>
             {result && <div className="result-box">Updated stock quantity: <strong>{result.quantity}</strong></div>}
           </form>
         </section>
