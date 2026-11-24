@@ -11,6 +11,7 @@ import * as stock from '../controllers/stockController.js';
 import * as transactions from '../controllers/transactionController.js';
 import * as orders from '../controllers/orderController.js';
 import * as supplyRequests from '../controllers/supplyRequestController.js';
+import * as dashboard from '../controllers/dashboardController.js';
 
 const router = Router();
 
@@ -20,6 +21,11 @@ router.post('/auth/login', loginRateLimit, auth.login);
 router.use(protect);
 
 router.get('/auth/me', auth.me);
+
+router.get('/dashboard/admin', adminOnly, dashboard.adminSummary);
+router.get('/dashboard/manager', authorize('warehouseManager'), dashboard.managerSummary);
+router.get('/dashboard/supplier', authorize('supplier'), dashboard.supplierSummary);
+router.get('/dashboard/sales', authorize('salesRepresentative'), dashboard.salesSummary);
 
 router.get('/users', adminOnly, users.listUsers);
 router.put('/users/me', users.updateMe);

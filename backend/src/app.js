@@ -12,8 +12,14 @@ import routes from './routes/index.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+const allowedOrigins = new Set([
+  config.clientUrl,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+
 const allowedOrigin = (origin, callback) => {
-  if (!origin || origin === config.clientUrl || /\.vercel\.app$/.test(origin)) {
+  if (!origin || allowedOrigins.has(origin) || /\.vercel\.app$/.test(origin)) {
     return callback(null, true);
   }
   return callback(new Error('Origin not allowed by CORS'));

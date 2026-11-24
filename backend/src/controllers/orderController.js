@@ -394,7 +394,7 @@ export const cancelOrder = asyncHandler(async (req, res) => {
 });
 
 export const orderSummary = asyncHandler(async (_req, res) => {
-  const [rows] = await Order.aggregate([
+  const [row] = await Order.aggregate([
     {
       $group: {
         _id: null,
@@ -407,5 +407,22 @@ export const orderSummary = asyncHandler(async (_req, res) => {
       },
     },
   ]);
-  return ok(res, rows || { totalOrders: 0, revenue: 0, pending: 0, processing: 0, completed: 0, cancelled: 0 });
+
+  const summary = row || {};
+  const ordersByStatus = {
+    Pending: Number(summary.pending) || 0,
+    Processing: Number(summary.processing) || 0,
+    Completed: Number(summary.completed) || 0,
+    Cancelled: Number(summary.cancelled) || 0,
+  };
+
+  return ok(res, {
+    totalOrders: Number(summary.totalOrders) || 0,
+    revenue: Number(summary.revenue) || 0,
+    pending: ordersByStatus.Pending,
+    processing: ordersByStatus.Processing,
+    completed: ordersByStatus.Completed,
+    cancelled: ordersByStatus.Cancelled,
+    ordersByStatus,
+  });
 });
