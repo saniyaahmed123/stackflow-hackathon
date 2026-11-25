@@ -9,6 +9,10 @@ const stockTransactionSchema = new Schema(
     note: { type: String, default: '' },
     performedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     date: { type: Date, default: Date.now },
+    transferId: { type: Schema.Types.ObjectId, default: null, select: false, index: true },
+    linkedTransaction: { type: Schema.Types.ObjectId, ref: 'StockTransaction', default: null, select: false },
+    transferDirection: { type: String, enum: ['out', 'in'], default: null, select: false },
+    counterpartyWarehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', default: null, select: false },
   },
   { timestamps: true }
 );

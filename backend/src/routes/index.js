@@ -58,6 +58,7 @@ router.get('/stock', stock.listStock);
 router.get('/stock/low', authorize('admin', 'warehouseManager'), stock.lowStock);
 router.post('/stock/in', authorize('admin', 'warehouseManager'), stock.stockIn);
 router.post('/stock/out', authorize('admin', 'warehouseManager'), stock.stockOut);
+router.post('/stock/transfer', authorize('admin', 'warehouseManager'), stock.transferStock);
 
 router.get('/transactions', authorize('admin', 'warehouseManager'), transactions.listTransactions);
 
