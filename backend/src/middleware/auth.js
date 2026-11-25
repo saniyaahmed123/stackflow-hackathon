@@ -26,6 +26,24 @@ export const protect = asyncHandler(async (req, res, next) => {
   }
 });
 
+export const optionalProtect = asyncHandler(async (req, _res, next) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+  if (!token) return next();
+
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret);
+    const user = await User.findById(decoded.id)
+      .select('-password')
+      .populate('assignedWarehouses', 'name location');
+    if (user && user.isActive !== false) req.user = user;
+  } catch {
+    req.user = undefined;
+  }
+
+  return next();
+});
+
 export const authorize = (...roles) => (req, res, next) => {
   if (!req.user) return fail(res, 401, 'Authentication required');
   if (!roles.includes(req.user.role)) return fail(res, 403, 'You do not have permission for this action');

@@ -18,7 +18,14 @@ export const register = asyncHandler(async (req, res) => {
   if (await User.exists({ email })) return fail(res, 409, `An account with email "${email}" already exists.`);
 
   const requestedRole = String(req.body.role || 'salesRepresentative');
-  const role = PUBLIC_ROLES.includes(requestedRole) ? requestedRole : 'salesRepresentative';
+  if (requestedRole === 'admin' && req.user?.role !== 'admin') {
+    return fail(res, 403, 'Admin accounts can only be created by an administrator.');
+  }
+  const role = requestedRole === 'admin'
+    ? 'admin'
+    : PUBLIC_ROLES.includes(requestedRole)
+      ? requestedRole
+      : 'salesRepresentative';
 
   const image = String(req.body.image || '');
   const imageFileId = String(req.body.imageFileId || '');

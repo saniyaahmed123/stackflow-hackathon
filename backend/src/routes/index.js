@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { adminOnly, authorize, protect } from '../middleware/auth.js';
+import { adminOnly, authorize, optionalProtect, protect } from '../middleware/auth.js';
 import { loginRateLimit, registerRateLimit } from '../middleware/rateLimit.js';
 
 import * as auth from '../controllers/authController.js';
@@ -15,7 +15,7 @@ import * as dashboard from '../controllers/dashboardController.js';
 
 const router = Router();
 
-router.post('/auth/register', registerRateLimit, auth.register);
+router.post('/auth/register', registerRateLimit, optionalProtect, auth.register);
 router.post('/auth/login', loginRateLimit, auth.login);
 
 router.use(protect);
