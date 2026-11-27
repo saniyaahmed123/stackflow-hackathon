@@ -18,10 +18,13 @@ export const listTransactions = asyncHandler(async (req, res) => {
   }
   if (['stock-in', 'stock-out'].includes(req.query.type)) query.transactionType = req.query.type;
   if (req.query.productId) query.product = req.query.productId;
-  if (req.query.from || req.query.to) {
-    query.date = {};
-    if (req.query.from) query.date.$gte = new Date(req.query.from);
-    if (req.query.to) query.date.$lte = new Date(req.query.to);
+  if (req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)) {
+    const start = new Date(`${req.query.date}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    if (!Number.isNaN(start.getTime())) {
+      query.date = { $gte: start, $lt: end };
+    }
   }
   if (req.query.q) {
     const pattern = new RegExp(escapeRegex(req.query.q), 'i');

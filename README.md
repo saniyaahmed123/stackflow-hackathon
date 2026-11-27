@@ -18,24 +18,22 @@ MongoDB/Mongoose · Express · React (Vite) · Node · JWT + bcrypt · ImageKit
 
    | Variable | Purpose |
    | --- | --- |
-   | `PORT` | API port (default `5000`) |
-   | `MONGO_URI` | MongoDB connection string with a database name |
+   | `MONGO_URI` | MongoDB Atlas connection string with a database name |
    | `JWT_SECRET` | Signing secret; required in **every** environment |
-   | `JWT_EXPIRES` | Token lifetime (default `7d`) |
    | `IMAGEKIT_PUBLIC_KEY` | ImageKit public key |
    | `IMAGEKIT_PRIVATE_KEY` | ImageKit private key, server-only |
    | `IMAGEKIT_URL_ENDPOINT` | ImageKit URL endpoint |
-   | `CLIENT_URL` | Allowed browser origin (default `http://127.0.0.1:5173`; `localhost:5173` is also allowed) |
+   | `CLIENT_URL` | Allowed browser origin (local `localhost`/`127.0.0.1` origins are also allowed) |
 
    The server refuses to start if `JWT_SECRET` is missing or blank. Never commit `.env` files.
 
-3. Create `frontend/.env` from `frontend/.env.example` if you want to change the API base URL:
+3. Create `frontend/.env` from `frontend/.env.example` if the API is not on the local fallback:
 
    | Variable | Purpose |
    | --- | --- |
-   | `VITE_API_URL` | `/api` by default; set an absolute URL only for a separate API host |
+   | `VITE_API_URL` | Absolute API base URL, e.g. the deployed backend URL |
 
-   With no `frontend/.env`, the frontend calls `/api`. Vite binds `127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:5000`, so `GET http://127.0.0.1:5173/api/health` returns JSON. If `VITE_API_URL` is an absolute URL, the browser calls that URL directly and the Vite proxy is bypassed.
+   With no `frontend/.env`, the frontend calls `http://127.0.0.1:5000/api`. Vite binds `127.0.0.1:5173`; setting `VITE_API_URL` makes the browser call that URL directly instead.
 
 4. Seed sample data (users, warehouses, products, stock, transactions, orders, requests):
 
@@ -78,7 +76,7 @@ Seeded passwords are demo-only:
 | supplier | supplier2@parcelpoint.pk | supplier2123 |
 | salesRepresentative | sales@parcelpoint.pk | sales123 |
 
-Public registration can create supplier, warehouseManager, or salesRepresentative accounts — **never admin**. Only an admin can create/promote admins.
+Public registration takes a name, email, phone, password, and a role choice of salesRepresentative or supplier. No photo at signup: any signed-in user adds or changes it later in Profile settings. Admins are seeded only — they are never created through Register. The Admin creates warehouse managers and other admins from the Users page, and can edit or delete any user. Warehouse managers cannot sign up themselves.
 
 ## Roles & permissions
 
@@ -97,7 +95,7 @@ All responses use `{ success: true, data, message? }` on success and `{ success:
 
 | Method | Endpoint | Access |
 | --- | --- | --- |
-| GET | `/api/health` | public |
+| GET | `/api/health` | public (returns `{ ok: true }`) |
 
 ### Auth
 
@@ -112,6 +110,7 @@ All responses use `{ success: true, data, message? }` on success and `{ success:
 | Method | Endpoint | Access |
 | --- | --- | --- |
 | GET | `/api/users` | admin |
+| POST | `/api/users` | admin |
 | GET | `/api/users/suppliers` | authenticated |
 | GET | `/api/users/suppliers/summary` | admin |
 | GET | `/api/users/:id` | authenticated, own user or admin |
@@ -212,14 +211,27 @@ All responses use `{ success: true, data, message? }` on success and `{ success:
 - Product/user images must be ImageKit URLs with a matching `fileId`; data URLs are rejected on update.
 - Dashboard data is scoped: managers see assigned warehouses only, suppliers see own products/requests only, sales reps see own orders only, and admin sees the full picture.
 
-## Deploy to Vercel (frontend + API together)
+## Deployment (two Vercel projects)
 
-The repo includes `vercel.json`: Vite builds `frontend/dist`, and `/api/*` rewrites to the Node serverless function in `api/index.js` (which reuses the Express app). MongoDB Atlas is required — a local `mongod` is not reachable from Vercel.
+Use two separate Vercel projects created from the same repository. MongoDB Atlas is required — a local `mongod` is not reachable from Vercel. The legacy root `vercel.json` and `api/index.js` are not used by this setup.
 
-1. Push the repo to GitHub, then **Import Project** in Vercel. No framework preset is needed; `vercel.json` supplies the build command and output directory. In Atlas **Network Access**, allow `0.0.0.0/0` (or Vercel's egress IPs), otherwise serverless calls cannot reach MongoDB.
-2. Add these Environment Variables in the Vercel project (Production and Preview): `MONGO_URI`, `JWT_SECRET`, `JWT_EXPIRES`, `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, `IMAGEKIT_URL_ENDPOINT`, `CLIENT_URL`, and `VITE_API_URL=/api`.
-3. Deploy. The API is available at `https://<your-project>.vercel.app/api/health`.
-4. Seed the deployed Atlas database once from your machine with the same `MONGO_URI` (`npm run seed`), then log in with the seeded credentials. **Seeding clears all users in that database.**
+1. **MongoDB Atlas:** create a cluster and database user, then in **Network Access** allow `0.0.0.0/0` so Vercel serverless functions can connect. Copy the connection string with a database name for `MONGO_URI`.
+2. **Backend project on Vercel:** **Import Project**, choose this repo, and set **Root Directory** to `backend`. Vercel uses `backend/vercel.json` and the Node function in `backend/api/index.js`. Add the backend environment variables listed below (Production and Preview), then deploy. Check `https://<backend-project>.vercel.app/api/health` returns `{"ok":true}`.
+3. **Frontend project on Vercel:** **Import Project** again from the same repo and set **Root Directory** to `frontend`. Vercel uses `frontend/vercel.json` so refreshes do not 404. Set `VITE_API_URL` to the deployed backend base URL including `/api` (for example `https://<backend-project>.vercel.app/api`), then deploy.
+4. **Set `CLIENT_URL` on the backend:** update it to the frontend origin (for example `https://<frontend-project>.vercel.app`) and redeploy the backend so CORS allows the deployed site.
+5. **Seed:** create a local `backend/.env` with the same Atlas `MONGO_URI` plus the other backend variables, then run `npm run seed` from the repo root (or `npm run seed --workspace backend`). **Seeding clears all users, products, warehouses, stock, transactions, orders, and supply requests in that database.**
+
+Environment variables to set on each Vercel project:
+
+| Vercel project | Variable | Value |
+| --- | --- | --- |
+| Backend (`backend/`) | `MONGO_URI` | Atlas connection string with database name |
+| Backend (`backend/`) | `JWT_SECRET` | Long random secret |
+| Backend (`backend/`) | `IMAGEKIT_PUBLIC_KEY` | ImageKit public key |
+| Backend (`backend/`) | `IMAGEKIT_PRIVATE_KEY` | ImageKit private key (server-only) |
+| Backend (`backend/`) | `IMAGEKIT_URL_ENDPOINT` | ImageKit URL endpoint |
+| Backend (`backend/`) | `CLIENT_URL` | Deployed frontend origin from step 3 |
+| Frontend (`frontend/`) | `VITE_API_URL` | Deployed backend API base URL from step 2 |
 
 ## Postman / demo flow
 

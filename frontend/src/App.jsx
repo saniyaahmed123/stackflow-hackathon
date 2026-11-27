@@ -7,6 +7,7 @@ import { Loading } from './components/ui';
 import { AccessDenied, Login, Register } from './pages/Auth';
 import Home from './pages/Home';
 import NotFound from './pages/NotFound';
+import ProfileSettings from './pages/ProfileSettings';
 import {
   AdminLowStock, AdminOrders, AdminOverview, AdminProducts, AdminTransactions,
   AdminUsers, AdminWarehouses,
@@ -16,7 +17,7 @@ import AdminSuppliers from './pages/admin/AdminSuppliers';
 import {
   ManagerInventory, ManagerLowStock, ManagerOverview, ManagerProducts, ManagerStockMovement, ManagerTransactions,
 } from './pages/manager/ManagerPages';
-import { SupplierProducts, SupplierProfile, SupplierRequests } from './pages/supplier/SupplierPages';
+import { SupplierOverview, SupplierProducts, SupplierRequests } from './pages/supplier/SupplierPages';
 import { SalesOrders, SalesOverview, SalesProducts } from './pages/sales/SalesPages';
 
 const guard = (roles, element) => <ProtectedRoute roles={roles}>{element}</ProtectedRoute>;
@@ -38,6 +39,7 @@ export default function App() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
+          <Route path="/profile" element={<ProfileSettings />} />
           <Route path="/admin" element={guard(['admin'], <AdminOverview />)} />
           <Route path="/admin/users" element={guard(['admin'], <AdminUsers />)} />
           <Route path="/admin/products" element={guard(['admin'], <AdminProducts />)} />
@@ -55,7 +57,8 @@ export default function App() {
           <Route path="/manager/transactions" element={guard(['warehouseManager'], <ManagerTransactions />)} />
           <Route path="/manager/low-stock" element={guard(['warehouseManager'], <ManagerLowStock />)} />
 
-          <Route path="/supplier" element={guard(['supplier'], <SupplierProfile />)} />
+          <Route path="/supplier" element={guard(['supplier'], <SupplierOverview />)} />
+          <Route path="/supplier/profile" element={<Navigate to="/profile" replace />} />
           <Route path="/supplier/products" element={guard(['supplier'], <SupplierProducts />)} />
           <Route path="/supplier/requests" element={guard(['supplier'], <SupplierRequests />)} />
 

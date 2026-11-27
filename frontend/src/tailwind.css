@@ -17,10 +17,6 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-html {
-  scroll-behavior: smooth;
-}
-
 .pp-home *,
 .pp-home *::before,
 .pp-home *::after {

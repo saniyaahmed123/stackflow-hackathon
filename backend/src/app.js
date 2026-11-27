@@ -12,24 +12,29 @@ import routes from './routes/index.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-const allowedOrigins = new Set([
-  config.clientUrl,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-]);
+const allowedOrigins = new Set([process.env.CLIENT_URL || config.clientUrl]);
+const isLocalhost = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || '');
 
 const allowedOrigin = (origin, callback) => {
-  if (!origin || allowedOrigins.has(origin) || /\.vercel\.app$/.test(origin)) {
+  if (!origin || allowedOrigins.has(origin) || isLocalhost(origin) || /\.vercel\.app$/.test(origin)) {
     return callback(null, true);
   }
   return callback(new Error('Origin not allowed by CORS'));
 };
 
-app.use(cors({ origin: allowedOrigin, credentials: true }));
+const corsOptions = {
+  origin: allowedOrigin,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options('/api/*', cors(corsOptions));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.get('/api/health', (_req, res) => res.json({ success: true, message: 'Parcel Point API is running' }));
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api', asyncHandler(async (_req, _res, next) => {
   await ensureDB();

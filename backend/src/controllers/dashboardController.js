@@ -28,6 +28,40 @@ const startOfToday = () => {
   return date;
 };
 
+const startOfTrend = () => {
+  const date = startOfToday();
+  date.setDate(date.getDate() - 6);
+  return date;
+};
+
+const dayKey = (date) => {
+  const value = new Date(date);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+};
+
+const buildMovementTrend = (rows) => {
+  const start = startOfTrend();
+  const trend = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return {
+      date: dayKey(day),
+      label: day.toLocaleDateString(undefined, { weekday: 'short' }),
+      stockIn: 0,
+      stockOut: 0,
+    };
+  });
+  const byDay = new Map(trend.map((point) => [point.date, point]));
+  for (const row of rows) {
+    const point = byDay.get(dayKey(row.date));
+    if (!point) continue;
+    const quantity = Number(row.quantity) || 0;
+    if (row.transactionType === 'stock-in') point.stockIn += quantity;
+    if (row.transactionType === 'stock-out') point.stockOut += quantity;
+  }
+  return trend;
+};
+
 const stockView = (stock) => ({
   id: String(stock._id),
   productId: String(stock.product?._id || stock.product),
@@ -40,7 +74,7 @@ const stockView = (stock) => ({
 });
 
 export const adminSummary = asyncHandler(async (_req, res) => {
-  const [users, products, warehouses, suppliers, orders, orderRows, stocks, todayTransactions, recentOrders, recentTransactions, recentRequests] =
+  const [users, products, warehouses, suppliers, orders, orderRows, stocks, todayTransactions, recentOrders, recentTransactions, recentRequests, trendRows] =
     await Promise.all([
       User.countDocuments({}),
       Product.countDocuments({}),
@@ -59,8 +93,9 @@ export const adminSummary = asyncHandler(async (_req, res) => {
         .limit(5)
         .lean(),
       StockTransaction.find({})
-        .populate('product', 'name sku')
+        .populate('product', 'name sku imageUrl')
         .populate('warehouse', 'name')
+        .populate('performedBy', 'name')
         .sort({ date: -1 })
         .limit(5)
         .lean(),
@@ -68,6 +103,9 @@ export const adminSummary = asyncHandler(async (_req, res) => {
         .populate('product', 'name sku')
         .sort({ createdAt: -1 })
         .limit(5)
+        .lean(),
+      StockTransaction.find({ date: { $gte: startOfTrend() } })
+        .select('date transactionType quantity')
         .lean(),
     ]);
 
@@ -106,29 +144,61 @@ export const adminSummary = asyncHandler(async (_req, res) => {
     ).length,
     outOfStockCount: stocks.filter((stock) => Number(stock.quantity) === 0).length,
     todayStockTransactions: todayTransactions,
+    stockMovementTrend: buildMovementTrend(trendRows),
     recentActivity,
+    recentTransactions: recentTransactions.map((transaction) => ({
+      id: String(transaction._id),
+      reference: `TX-${String(transaction._id).slice(-6).toUpperCase()}`,
+      productName: transaction.product?.name || 'Deleted product',
+      sku: transaction.product?.sku || '-',
+      productImage: transaction.product?.imageUrl || '',
+      warehouseName: transaction.warehouse?.name || '-',
+      transactionType: transaction.transactionType,
+      quantity: Number(transaction.quantity) || 0,
+      note: transaction.note || '',
+      performedBy: transaction.performedBy?.name || '-',
+      at: transaction.date,
+    })),
   });
 });
 
 export const managerSummary = asyncHandler(async (req, res) => {
   const warehouseIds = assignedWarehouseIds(req.user);
-  const [warehouses, stocks, usageRows, movements] = await Promise.all([
-    Warehouse.find({ _id: { $in: warehouseIds } }).lean(),
-    Stock.find({ warehouse: { $in: warehouseIds } })
-      .populate('product', 'name sku lowStockLimit')
-      .populate('warehouse', 'name')
-      .lean(),
-    Stock.aggregate([
-      { $match: { warehouse: { $in: warehouseIds } } },
-      { $group: { _id: '$warehouse', usedCapacity: { $sum: '$quantity' } } },
-    ]),
-    StockTransaction.find({ warehouse: { $in: warehouseIds } })
-      .populate('product', 'name sku')
-      .populate('warehouse', 'name')
-      .sort({ date: -1 })
-      .limit(8)
-      .lean(),
-  ]);
+  const [warehouses, stocks, usageRows, movements, todayTransactions, trendRows] =
+    await Promise.all([
+      Warehouse.find({ _id: { $in: warehouseIds } }).lean(),
+      Stock.find({ warehouse: { $in: warehouseIds } })
+        .populate('product', 'name sku lowStockLimit')
+        .populate('warehouse', 'name')
+        .lean(),
+      Stock.aggregate([
+        { $match: { warehouse: { $in: warehouseIds } } },
+        { $group: { _id: '$warehouse', usedCapacity: { $sum: '$quantity' } } },
+      ]),
+      StockTransaction.find({ warehouse: { $in: warehouseIds } })
+        .populate('product', 'name sku')
+        .populate('warehouse', 'name')
+        .populate('performedBy', 'name')
+        .sort({ date: -1 })
+        .limit(8)
+        .lean(),
+      StockTransaction.countDocuments({
+        warehouse: { $in: warehouseIds },
+        date: { $gte: startOfToday() },
+      }),
+      StockTransaction.find({
+        warehouse: { $in: warehouseIds },
+        date: { $gte: startOfTrend() },
+      })
+        .select('date transactionType quantity')
+        .lean(),
+    ]);
+
+  const productCount = new Set(
+    stocks
+      .map((stock) => String(stock.product?._id || stock.product || ''))
+      .filter(Boolean),
+  ).size;
 
   const usage = new Map(usageRows.map((row) => [String(row._id), Number(row.usedCapacity) || 0]));
   const assigned = warehouses.map((warehouse) => {
@@ -151,11 +221,14 @@ export const managerSummary = asyncHandler(async (req, res) => {
 
   return ok(res, {
     role: 'warehouseManager',
+    totals: { products: productCount, warehouses: assigned.length },
     warehouses: assigned,
     lowStockItems,
     outOfStockItems,
     lowStockCount: lowStockItems.length,
     outOfStockCount: outOfStockItems.length,
+    todayStockTransactions: todayTransactions,
+    stockMovementTrend: buildMovementTrend(trendRows),
     recentStockMovements: movements.map((transaction) => ({
       id: String(transaction._id),
       type: transaction.transactionType,
@@ -163,6 +236,19 @@ export const managerSummary = asyncHandler(async (req, res) => {
       sku: transaction.product?.sku || '',
       warehouseName: transaction.warehouse?.name || '',
       quantity: Number(transaction.quantity) || 0,
+      at: transaction.date,
+    })),
+    recentTransactions: movements.map((transaction) => ({
+      id: String(transaction._id),
+      reference: `TX-${String(transaction._id).slice(-6).toUpperCase()}`,
+      productName: transaction.product?.name || 'Deleted product',
+      sku: transaction.product?.sku || '-',
+      productImage: transaction.product?.imageUrl || '',
+      warehouseName: transaction.warehouse?.name || '-',
+      transactionType: transaction.transactionType,
+      quantity: Number(transaction.quantity) || 0,
+      note: transaction.note || '',
+      performedBy: transaction.performedBy?.name || '-',
       at: transaction.date,
     })),
   });

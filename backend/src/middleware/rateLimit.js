@@ -12,7 +12,8 @@ const formatWait = (seconds) => {
 
 const clientKey = (req, identity = '') => {
   const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return `${req.originalUrl.split('?')[0]}:${forwarded || req.ip || 'unknown'}:${identity}`;
+  const resolved = typeof identity === 'function' ? identity(req) : identity;
+  return `${req.originalUrl.split('?')[0]}:${forwarded || req.ip || 'unknown'}:${resolved}`;
 };
 
 export function rateLimit({
@@ -76,4 +77,11 @@ export const loginRateLimit = rateLimit({
 export const registerRateLimit = rateLimit({
   limit: 5,
   message: 'Too many registration attempts.',
+});
+
+export const passwordRateLimit = rateLimit({
+  limit: 10,
+  message: 'Too many password change attempts.',
+  countFailures: true,
+  identity: (req) => String(req.user?._id || ''),
 });

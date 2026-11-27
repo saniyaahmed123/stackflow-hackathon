@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
-import api, { apiError, formatDate } from '../../api';
-import { useAuth } from '../../auth/AuthContext';
-import ImageUpload from '../../components/ImageUpload';
-import { Amount, Badge, Empty, Field, Loading, PageHeader, Table, useToast } from '../../components/ui';
+import api, { apiError, formatDate, readList } from '../../api';
+import { Amount, Badge, Empty, Field, Loading, PageHeader, Pagination, StatCard, Table, Toolbar, useToast } from '../../components/ui';
 
 const useLoad = (loader, deps = []) => {
   const [data, setData] = useState(null);
@@ -19,66 +17,104 @@ const useLoad = (loader, deps = []) => {
   return { data, error, reload };
 };
 
-export function SupplierProfile() {
-  const { user, setProfile } = useAuth();
-  const toast = useToast();
-  const [form, setForm] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (user) setForm({ name: user.name, email: user.email, phone: user.phone || '', image: user.image || '', imageFileId: user.imageFileId || '' });
-  }, [user]);
-
-  const save = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      const { data } = await api.put('/users/me', form);
-      setProfile(data.data);
-      toast.success('Profile updated');
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!form) return <Loading />;
+export function SupplierOverview() {
+  const { data, error } = useLoad(async () => {
+    const [summary, rejected] = await Promise.all([
+      api.get('/dashboard/supplier'),
+      readList(api.get('/supply-requests', { params: { status: 'Rejected', limit: 5 } })),
+    ]);
+    return { ...summary.data.data, rejectedRequests: rejected.items };
+  }, []);
+  if (!data) return error ? <Empty message={error} /> : <Loading />;
   return (
     <>
-      <PageHeader title="Supplier profile" subtitle="Update your contact details and logo" />
-      <section className="panel narrow-panel">
-        <form onSubmit={save} className="stack-form">
-          <ImageUpload label="Company logo" value={form.image} fileId={form.imageFileId}
-            onChange={({ url, fileId }) => setForm({ ...form, image: url, imageFileId: fileId })} />
-          <Field label="Company name" required><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="Email" required><input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-          <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Saving...' : 'Save profile'}</button>
-        </form>
+      <PageHeader title="Supplier overview" subtitle="Your catalog and supply request pipeline" />
+      <div className="stat-grid">
+        <StatCard to="/supplier/products" label="My products" value={data.productCount || 0} />
+        <StatCard label="Pending requests" value={data.supplyRequestsByStatus?.Pending || 0} tone="warn" />
+        <StatCard label="Approved" value={data.supplyRequestsByStatus?.Approved || 0} tone="success" />
+        <StatCard label="Rejected" value={data.supplyRequestsByStatus?.Rejected || 0} tone="danger" />
+      </div>
+      <div className="panel-grid">
+        <section className="panel">
+          <div className="panel-head"><h2>My products</h2></div>
+          <Table head={['Product', 'SKU', 'Price', 'Total stock', 'Status']} empty={!data.products?.length}>
+            {(data.products || []).slice(0, 6).map((product) => (
+              <tr key={product.id}>
+                <td><strong>{product.name}</strong></td>
+                <td><span className="mono">{product.sku}</span></td>
+                <td><Amount value={product.price} /></td>
+                <td>{product.totalStock.toLocaleString()}</td>
+                <td><span className={`badge ${product.archived ? 'danger' : 'success'}`}>{product.archived ? 'Archived' : 'Active'}</span></td>
+              </tr>
+            ))}
+          </Table>
+        </section>
+        <section className="panel">
+          <div className="panel-head"><h2>Recent requests</h2></div>
+          <Table head={['Product', 'Warehouse', 'Qty', 'Status', 'When']} empty={!data.recentRequests?.length}>
+            {(data.recentRequests || []).map((request) => (
+              <tr key={request.id}>
+                <td><strong>{request.productName}</strong><small>{request.sku}</small></td>
+                <td>{request.warehouseName || '-'}</td>
+                <td>{request.quantity}</td>
+                <td><Badge status={request.status} /></td>
+                <td>{formatDate(request.at)}</td>
+              </tr>
+            ))}
+          </Table>
+        </section>
+      </div>
+      <section className="panel">
+        <div className="panel-head"><h2>Rejection reasons</h2><span className="muted">Latest feedback from administrators</span></div>
+        <Table head={['Product', 'Warehouse', 'Qty', 'Rejected', 'Reason']} empty={!data.rejectedRequests?.length}>
+          {(data.rejectedRequests || []).map((request) => (
+            <tr key={request._id}>
+              <td><strong>{request.product?.name || '-'}</strong><small>{request.product?.sku}</small></td>
+              <td>{request.warehouse?.name || '-'}</td>
+              <td>{request.quantity}</td>
+              <td>{formatDate(request.reviewedAt || request.updatedAt)}</td>
+              <td>{request.reviewNote || 'No reason provided'}</td>
+            </tr>
+          ))}
+        </Table>
       </section>
     </>
   );
 }
 
 export function SupplierProducts() {
-  const { data, error } = useLoad(() => api.get('/products').then((r) => r.data.data), []);
+  const [archived, setArchived] = useState('');
+  const [page, setPage] = useState(1);
+  const { data, error } = useLoad(
+    () => readList(api.get('/products', { params: { archived, page, limit: 20 } })),
+    [archived, page]
+  );
   return (
     <>
-      <PageHeader title="My products" subtitle="Items you supply to the warehouses" />
+      <PageHeader title="My products" subtitle={data ? `${data.pagination.total} items you supply to the warehouses` : 'Items you supply to the warehouses'} />
+      <Toolbar>
+        <select value={archived} onChange={(e) => { setArchived(e.target.value); setPage(1); }}>
+          <option value="">All products</option>
+          <option value="false">Active only</option>
+          <option value="true">Archived only</option>
+        </select>
+      </Toolbar>
       {!data ? (error ? <Empty message={error} /> : <Loading />) : (
         <section className="panel">
-          <Table head={['Product', 'SKU', 'Category', 'Price', 'Total stock']} empty={!data.length}>
-            {data.map((product) => (
+          <Table head={['Product', 'SKU', 'Category', 'Price', 'Total stock', 'Status']} empty={!data.items.length}>
+            {data.items.map((product) => (
               <tr key={product._id}>
                 <td><div className="person"><img className="thumb" src={product.imageUrl} alt="" /><div><strong>{product.name}</strong><small>{product.description || '-'}</small></div></div></td>
                 <td><span className="mono">{product.sku}</span></td>
                 <td>{product.category}</td>
                 <td><Amount value={product.price} /></td>
                 <td>{product.availableStock}</td>
+                <td><span className={`badge ${product.archived ? 'danger' : 'success'}`}>{product.archived ? 'Archived' : 'Active'}</span></td>
               </tr>
             ))}
           </Table>
+          <Pagination pagination={data.pagination} onPage={setPage} />
         </section>
       )}
     </>
@@ -89,12 +125,22 @@ const emptyRequest = { productId: '', warehouseId: '', quantity: 1, note: '' };
 
 export function SupplierRequests() {
   const toast = useToast();
+  const [status, setStatus] = useState('');
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
   const { data, error, reload } = useLoad(async () => {
     const [products, warehouses, requests] = await Promise.all([
-      api.get('/products'), api.get('/warehouses'), api.get('/supply-requests'),
+      readList(api.get('/products', { params: { archived: 'false', limit: 100 } })),
+      readList(api.get('/warehouses', { params: { limit: 100 } })),
+      readList(api.get('/supply-requests', { params: { status, q, page, limit: 20 } })),
     ]);
-    return { products: products.data.data, warehouses: warehouses.data.data, requests: requests.data.data };
-  }, []);
+    return {
+      products: products.items,
+      warehouses: warehouses.items,
+      requests: requests.items,
+      pagination: requests.pagination,
+    };
+  }, [status, q, page]);
   const [form, setForm] = useState(emptyRequest);
   const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
@@ -124,7 +170,16 @@ export function SupplierRequests() {
 
   return (
     <>
-      <PageHeader title="Supply requests" subtitle="Send stock to a warehouse and track approval" />
+      <PageHeader title="Supply requests" subtitle={data ? `${data.pagination.total} requests · send stock to a warehouse and track approval` : 'Send stock to a warehouse and track approval'} />
+      <Toolbar>
+        <input className="search" placeholder="Search product or notes..." value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+          <option value="">All statuses</option>
+          <option value="Pending">Pending</option>
+          <option value="Approved">Approved</option>
+          <option value="Rejected">Rejected</option>
+        </select>
+      </Toolbar>
       <div className="panel-grid">
         <section className="panel">
           <div className="panel-head"><h2>New request</h2></div>
@@ -153,7 +208,7 @@ export function SupplierRequests() {
         </section>
         <section className="panel">
           <div className="panel-head"><h2>Request history</h2></div>
-          <Table head={['Product', 'Warehouse', 'Qty', 'Status', 'Requested', 'Reviewed', 'Review note']} empty={!data.requests.length}>
+          <Table head={['Product', 'Warehouse', 'Qty', 'Status', 'Requested', 'Reviewed', 'Rejection reason']} empty={!data.requests.length}>
             {data.requests.map((request) => (
               <tr key={request._id}>
                 <td>{request.product?.name || '-'}</td>
@@ -162,10 +217,11 @@ export function SupplierRequests() {
                 <td><Badge status={request.status} /></td>
                 <td>{formatDate(request.createdAt)}</td>
                 <td>{request.reviewedAt ? formatDate(request.reviewedAt) : '-'}</td>
-                <td>{request.reviewNote || '-'}</td>
+                <td>{request.status === 'Rejected' ? (request.reviewNote || 'No reason provided') : '-'}</td>
               </tr>
             ))}
           </Table>
+          <Pagination pagination={data.pagination} onPage={setPage} />
         </section>
       </div>
     </>

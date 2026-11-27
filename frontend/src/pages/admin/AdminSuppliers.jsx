@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api, { apiError, formatDate } from '../../api';
 import { Amount, Badge, Empty, Loading, Modal, PageHeader, Table, Toolbar } from '../../components/ui';
-import { UserModal } from './AdminPages';
+import { RowIcon, UserModal } from './AdminPages';
 
 const useLoad = (loader, deps = []) => {
   const [data, setData] = useState(null);
@@ -52,7 +52,7 @@ export default function AdminSuppliers() {
       <Toolbar>
         <input className="search" placeholder="Search by name or email..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </Toolbar>
-      <section className="panel">
+      <section className="panel suppliers-table-panel">
         <Table head={['Supplier', 'Email', 'Phone', 'Products', 'Total requests', 'Pending', 'Actions']} empty={!rows.length}>
           {rows.map((supplier) => (
             <tr key={supplier._id} className="clickable-row" onClick={() => setSelected(supplier)}>
@@ -69,15 +69,51 @@ export default function AdminSuppliers() {
               <td>{supplier.productCount}</td>
               <td>{supplier.totalRequests}</td>
               <td><span className={`badge ${supplier.pendingRequests ? 'warn' : 'success'}`}>{supplier.pendingRequests}</span></td>
-              <td className="row-actions">
-                <button type="button" className="btn small" onClick={(event) => { event.stopPropagation(); setSelected(supplier); }}>Details</button>
-                <button type="button" className="btn small" onClick={(event) => { event.stopPropagation(); openEdit(supplier); }}>Edit</button>
+              <td className="row-actions" onClick={(event) => event.stopPropagation()}>
+                <span
+                  className="icon-action"
+                  role="button"
+                  tabIndex={0}
+                  title="Details"
+                  aria-label={`View ${supplier.name}`}
+                  onClick={() => setSelected(supplier)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelected(supplier);
+                    }
+                  }}
+                >
+                  <RowIcon name="view" />
+                </span>
+                <span
+                  className="icon-action"
+                  role="button"
+                  tabIndex={0}
+                  title="Edit"
+                  aria-label={`Edit ${supplier.name}`}
+                  onClick={() => openEdit(supplier)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openEdit(supplier);
+                    }
+                  }}
+                >
+                  <RowIcon name="edit" />
+                </span>
               </td>
             </tr>
           ))}
         </Table>
       </section>
-      <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.name || 'Supplier'} wide>
+      <Modal
+        open={Boolean(selected)}
+        onClose={() => setSelected(null)}
+        title={selected?.name || 'Supplier'}
+        wide
+        className="user-modal supplier-details-modal"
+      >
         {selected && (
           <>
             <div className="detail-grid">

@@ -3,6 +3,12 @@ node_modules/
 .env.*
 !.env.example
 dist/
+build/
+backend/dist/
+backend/build/
+frontend/dist/
+frontend/build/
 coverage/
+.vercel/
 *.log
 .DS_Store

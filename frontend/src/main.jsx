@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./auth/AuthContext";
 import { ToastProvider } from "./components/ui";
+import "lenis/dist/lenis.css";
 import "./styles.css";
 import "./tailwind.css";
 

@@ -9,8 +9,6 @@
   --pp-red: #A63D2F;
 }
 
-html { scroll-behavior: smooth; }
-
 .pp-home,
 .pp-home *,
 .pp-home *::before,

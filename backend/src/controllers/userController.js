@@ -31,6 +31,65 @@ const adminChangeError = async (req, user, nextRole, nextActive) => {
   return null;
 };
 
+export const createUser = asyncHandler(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '');
+  const password = String(req.body.password || '');
+  const role = String(req.body.role || 'salesRepresentative');
+
+  if (!name) return fail(res, 400, 'Name is required.');
+  if (!email) return fail(res, 400, 'Email is required.');
+  if (password.length < 6) return fail(res, 400, 'Password must be at least 6 characters.');
+  if (!ROLES.includes(role)) return fail(res, 400, 'Invalid role.');
+  if (await User.exists({ email })) return fail(res, 409, `An account with email "${email}" already exists.`);
+
+  let isActive = true;
+  if (req.body.isActive !== undefined) {
+    isActive = booleanValue(req.body.isActive);
+    if (isActive === null) return fail(res, 400, 'isActive must be true or false');
+  }
+
+  let assignedWarehouses = [];
+  if (req.body.assignedWarehouses !== undefined) {
+    if (!Array.isArray(req.body.assignedWarehouses)) {
+      return fail(res, 400, 'assignedWarehouses must be an array of warehouse ids');
+    }
+    if (role !== 'warehouseManager' && req.body.assignedWarehouses.length > 0) {
+      return fail(res, 400, 'Only warehouse managers can be assigned to warehouses');
+    }
+    assignedWarehouses = role === 'warehouseManager' ? req.body.assignedWarehouses : [];
+    if (assignedWarehouses.some((id) => !isObjectId(id))) {
+      return fail(res, 400, 'assignedWarehouses must be an array of warehouse ids');
+    }
+    const count = await Warehouse.countDocuments({ _id: { $in: assignedWarehouses } });
+    if (count !== assignedWarehouses.length) return fail(res, 400, 'One or more warehouses do not exist');
+  }
+
+  const image = String(req.body.image || '');
+  const imageFileId = String(req.body.imageFileId || '');
+  if ((image || imageFileId) && (!image || !imageFileId || !isImageKitUrl(image))) {
+    return fail(res, 400, 'Profile images must be uploaded through ImageKit');
+  }
+
+  const user = await User.create({
+    name,
+    email,
+    phone,
+    password: await bcrypt.hash(password, 10),
+    role,
+    isActive,
+    assignedWarehouses,
+    image,
+    imageFileId,
+  });
+
+  const populated = await User.findById(user._id)
+    .select('-password')
+    .populate('assignedWarehouses', 'name location');
+  return ok(res, populated, 'User created', 201);
+});
+
 export const listUsers = asyncHandler(async (req, res) => {
   const query = {};
   if (req.query.role && ROLES.includes(req.query.role)) query.role = req.query.role;
@@ -146,6 +205,13 @@ export const updateUser = asyncHandler(async (req, res) => {
     if (nextActive === null) return fail(res, 400, 'isActive must be true or false');
   }
   if (nextRole !== undefined && !ROLES.includes(nextRole)) return fail(res, 400, 'Invalid role');
+  const effectiveRole = nextRole !== undefined ? nextRole : user.role;
+  if (assignedWarehouses !== undefined && !Array.isArray(assignedWarehouses)) {
+    return fail(res, 400, 'assignedWarehouses must be an array of warehouse ids');
+  }
+  if (effectiveRole !== 'warehouseManager' && assignedWarehouses?.length > 0) {
+    return fail(res, 400, 'Only warehouse managers can be assigned to warehouses');
+  }
   const guardError = await adminChangeError(req, user, nextRole, nextActive);
   if (guardError) return fail(res, 400, guardError);
 
@@ -159,8 +225,10 @@ export const updateUser = asyncHandler(async (req, res) => {
   }
   if (nextRole !== undefined) user.role = nextRole;
   if (nextActive !== undefined) user.isActive = nextActive;
-  if (assignedWarehouses !== undefined) {
-    if (!Array.isArray(assignedWarehouses) || assignedWarehouses.some((id) => !isObjectId(id))) {
+  if (effectiveRole !== 'warehouseManager') {
+    user.assignedWarehouses = [];
+  } else if (assignedWarehouses !== undefined) {
+    if (assignedWarehouses.some((id) => !isObjectId(id))) {
       return fail(res, 400, 'assignedWarehouses must be an array of warehouse ids');
     }
     const count = await Warehouse.countDocuments({ _id: { $in: assignedWarehouses } });

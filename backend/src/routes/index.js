@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { adminOnly, authorize, optionalProtect, protect } from '../middleware/auth.js';
-import { loginRateLimit, registerRateLimit } from '../middleware/rateLimit.js';
+import { adminOnly, authorize, protect } from '../middleware/auth.js';
+import { loginRateLimit, passwordRateLimit, registerRateLimit } from '../middleware/rateLimit.js';
 
 import * as auth from '../controllers/authController.js';
 import * as users from '../controllers/userController.js';
@@ -15,12 +15,13 @@ import * as dashboard from '../controllers/dashboardController.js';
 
 const router = Router();
 
-router.post('/auth/register', registerRateLimit, optionalProtect, auth.register);
+router.post('/auth/register', registerRateLimit, auth.register);
 router.post('/auth/login', loginRateLimit, auth.login);
 
 router.use(protect);
 
 router.get('/auth/me', auth.me);
+router.put('/auth/password', passwordRateLimit, auth.changePassword);
 
 router.get('/dashboard/admin', adminOnly, dashboard.adminSummary);
 router.get('/dashboard/manager', authorize('warehouseManager'), dashboard.managerSummary);
@@ -28,6 +29,7 @@ router.get('/dashboard/supplier', authorize('supplier'), dashboard.supplierSumma
 router.get('/dashboard/sales', authorize('salesRepresentative'), dashboard.salesSummary);
 
 router.get('/users', adminOnly, users.listUsers);
+router.post('/users', adminOnly, users.createUser);
 router.put('/users/me', users.updateMe);
 router.get('/users/suppliers', authorize('admin', 'warehouseManager', 'supplier', 'salesRepresentative'), users.listSuppliers);
 router.get('/users/suppliers/summary', adminOnly, users.listSupplierSummaries);
